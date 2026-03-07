@@ -19,13 +19,12 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt Pillow
 
       - name: Install Ghostscript
         run: |
           $ProgressPreference = 'SilentlyContinue'
 
-          # Get latest Ghostscript release from GitHub
           try {
             $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/ArtifexSoftware/ghostpdl-downloads/releases/latest'
             $asset = $release.assets | Where-Object { $_.name -match 'w64\.exe$' -and $_.name -notmatch 'src' } | Select-Object -First 1
@@ -40,10 +39,8 @@ jobs:
             Invoke-WebRequest -Uri 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10040/gs10040w64.exe' -OutFile "$env:TEMP\gs-installer.exe"
           }
 
-          # Install silently
           Start-Process -FilePath "$env:TEMP\gs-installer.exe" -ArgumentList '/S', '/NCRC' -Wait
 
-          # Find where it installed
           $gsDir = Get-ChildItem "C:\Program Files\gs" -Directory | Sort-Object Name -Descending | Select-Object -First 1
           Write-Host "Ghostscript installed at: $($gsDir.FullName)"
           echo "GS_DIR=$($gsDir.FullName)" >> $env:GITHUB_ENV
@@ -51,7 +48,6 @@ jobs:
 
       - name: Prepare Ghostscript bundle
         run: |
-          # Copy GS binaries into a folder that PyInstaller will bundle
           $gsDir = "$env:GS_DIR"
           mkdir gs_bundle\bin
           mkdir gs_bundle\lib
@@ -61,32 +57,55 @@ jobs:
           Copy-Item "$gsDir\lib\*" "gs_bundle\lib\" -Recurse
           Copy-Item "$gsDir\Resource\*" "gs_bundle\Resource\" -Recurse
 
-          Write-Host "Ghostscript bundle prepared:"
-          Get-ChildItem gs_bundle -Recurse | Select-Object FullName
+          Write-Host "Ghostscript bundle prepared"
+        shell: pwsh
+
+      - name: Generate app icon
+        run: python create_icon.py
         shell: pwsh
 
       - name: Build exe with PyInstaller
         run: |
           pyinstaller --noconfirm --onefile --windowed `
             --name "PDF Tool" `
+            --icon "app_icon.ico" `
             --add-data "gs_bundle;gs" `
             pdf_tool.py
         shell: pwsh
 
-      - name: Verify build
+      - name: Verify exe
         run: |
           if (Test-Path "dist\PDF Tool.exe") {
             $size = (Get-Item "dist\PDF Tool.exe").Length / 1MB
-            Write-Host "Build successful! Size: $([math]::Round($size, 1)) MB"
+            Write-Host "EXE built successfully! Size: $([math]::Round($size, 1)) MB"
           } else {
             Write-Error "Build failed - exe not found"
             exit 1
           }
         shell: pwsh
 
-      - name: Upload artifact
+      - name: Build installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          if (Test-Path "installer_output\Install PDF Tool.exe") {
+            $size = (Get-Item "installer_output\Install PDF Tool.exe").Length / 1MB
+            Write-Host "Installer built successfully! Size: $([math]::Round($size, 1)) MB"
+          } else {
+            Write-Error "Installer build failed"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Tool
+          name: PDF-Tool-Installer
+          path: installer_output/Install PDF Tool.exe
+          retention-days: 90
+
+      - name: Upload standalone exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF-Tool-Standalone
           path: dist/PDF Tool.exe
           retention-days: 90
