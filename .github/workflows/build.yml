@@ -21,48 +21,28 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt Pillow
 
-      - name: Install Ghostscript
-        run: |
-          $ProgressPreference = 'SilentlyContinue'
-
-          try {
-            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/ArtifexSoftware/ghostpdl-downloads/releases/latest'
-            $asset = $release.assets | Where-Object { $_.name -match 'w64\.exe$' -and $_.name -notmatch 'src' } | Select-Object -First 1
-            if ($asset) {
-              Write-Host "Downloading $($asset.name)..."
-              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:TEMP\gs-installer.exe"
-            } else {
-              throw "No asset found"
-            }
-          } catch {
-            Write-Host "Falling back to known version..."
-            Invoke-WebRequest -Uri 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10040/gs10040w64.exe' -OutFile "$env:TEMP\gs-installer.exe"
-          }
-
-          Start-Process -FilePath "$env:TEMP\gs-installer.exe" -ArgumentList '/S', '/NCRC' -Wait
-
-          $gsDir = Get-ChildItem "C:\Program Files\gs" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          Write-Host "Ghostscript installed at: $($gsDir.FullName)"
-          echo "GS_DIR=$($gsDir.FullName)" >> $env:GITHUB_ENV
-        shell: pwsh
+      - name: Install Ghostscript via Chocolatey
+        run: choco install ghostscript --yes --no-progress
+        shell: cmd
 
       - name: Prepare Ghostscript bundle
         run: |
-          $gsDir = "$env:GS_DIR"
+          $gsDir = Get-ChildItem "C:\Program Files\gs" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          Write-Host "Ghostscript found at: $($gsDir.FullName)"
+
           mkdir gs_bundle\bin
           mkdir gs_bundle\lib
           mkdir gs_bundle\Resource
 
-          Copy-Item "$gsDir\bin\*" "gs_bundle\bin\" -Recurse
-          Copy-Item "$gsDir\lib\*" "gs_bundle\lib\" -Recurse
-          Copy-Item "$gsDir\Resource\*" "gs_bundle\Resource\" -Recurse
+          Copy-Item "$($gsDir.FullName)\bin\*" "gs_bundle\bin\" -Recurse
+          Copy-Item "$($gsDir.FullName)\lib\*" "gs_bundle\lib\" -Recurse
+          Copy-Item "$($gsDir.FullName)\Resource\*" "gs_bundle\Resource\" -Recurse
 
           Write-Host "Ghostscript bundle prepared"
         shell: pwsh
 
       - name: Generate app icon
         run: python create_icon.py
-        shell: pwsh
 
       - name: Build exe with PyInstaller
         run: |
