@@ -1,0 +1,92 @@
+name: Build PDF Tool
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Ghostscript
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+
+          # Get latest Ghostscript release from GitHub
+          try {
+            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/ArtifexSoftware/ghostpdl-downloads/releases/latest'
+            $asset = $release.assets | Where-Object { $_.name -match 'w64\.exe$' -and $_.name -notmatch 'src' } | Select-Object -First 1
+            if ($asset) {
+              Write-Host "Downloading $($asset.name)..."
+              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:TEMP\gs-installer.exe"
+            } else {
+              throw "No asset found"
+            }
+          } catch {
+            Write-Host "Falling back to known version..."
+            Invoke-WebRequest -Uri 'https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10040/gs10040w64.exe' -OutFile "$env:TEMP\gs-installer.exe"
+          }
+
+          # Install silently
+          Start-Process -FilePath "$env:TEMP\gs-installer.exe" -ArgumentList '/S', '/NCRC' -Wait
+
+          # Find where it installed
+          $gsDir = Get-ChildItem "C:\Program Files\gs" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          Write-Host "Ghostscript installed at: $($gsDir.FullName)"
+          echo "GS_DIR=$($gsDir.FullName)" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Prepare Ghostscript bundle
+        run: |
+          # Copy GS binaries into a folder that PyInstaller will bundle
+          $gsDir = "$env:GS_DIR"
+          mkdir gs_bundle\bin
+          mkdir gs_bundle\lib
+          mkdir gs_bundle\Resource
+
+          Copy-Item "$gsDir\bin\*" "gs_bundle\bin\" -Recurse
+          Copy-Item "$gsDir\lib\*" "gs_bundle\lib\" -Recurse
+          Copy-Item "$gsDir\Resource\*" "gs_bundle\Resource\" -Recurse
+
+          Write-Host "Ghostscript bundle prepared:"
+          Get-ChildItem gs_bundle -Recurse | Select-Object FullName
+        shell: pwsh
+
+      - name: Build exe with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onefile --windowed `
+            --name "PDF Tool" `
+            --add-data "gs_bundle;gs" `
+            pdf_tool.py
+        shell: pwsh
+
+      - name: Verify build
+        run: |
+          if (Test-Path "dist\PDF Tool.exe") {
+            $size = (Get-Item "dist\PDF Tool.exe").Length / 1MB
+            Write-Host "Build successful! Size: $([math]::Round($size, 1)) MB"
+          } else {
+            Write-Error "Build failed - exe not found"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF-Tool
+          path: dist/PDF Tool.exe
+          retention-days: 90

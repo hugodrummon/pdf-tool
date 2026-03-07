@@ -1,0 +1,79 @@
+
+=========================================
+         PDF Tool — Quick Guide
+=========================================
+
+This tool lets you compress, merge, and rename
+PDF files. Everything happens on this computer
+— nothing is sent anywhere.
+
+
+-----------------------------------------
+  HOW TO OPEN THE APP
+-----------------------------------------
+
+Double-click the "PDF Tool" icon on your Desktop.
+
+The app will open with three tabs at the top:
+  - Compress
+  - Merge
+  - Rename
+
+
+-----------------------------------------
+  COMPRESS A PDF (make it smaller)
+-----------------------------------------
+
+1. Click the "Compress" tab
+2. Drag your PDF file from a folder and drop it
+   into the dotted area — or click "browse" to
+   find the file
+3. Wait for the green tick to appear
+4. Type a name for the new file
+5. Click "Save"
+
+The compressed file will be saved in the same
+folder as the original.
+
+
+-----------------------------------------
+  MERGE PDFs (combine several into one)
+-----------------------------------------
+
+1. Click the "Merge" tab
+2. Drag all the PDF files you want to combine
+   into the dotted area
+3. Use the Up and Down buttons to put them in
+   the right order
+4. Click "Merge into one PDF"
+5. Wait for the green tick
+6. Type a name for the new file
+7. Click "Save"
+
+The merged file will be saved in the same folder
+as the first file you added.
+
+
+-----------------------------------------
+  RENAME A PDF
+-----------------------------------------
+
+1. Click the "Rename" tab
+2. Drag the PDF file into the dotted area
+3. Type the new name
+4. Click "Rename"
+5. Done — green tick means it worked
+
+
+-----------------------------------------
+  IF SOMETHING GOES WRONG
+-----------------------------------------
+
+If you see a red message, try again.
+If it keeps happening, contact your IT team.
+
+
+=========================================
+  Remember: Nothing leaves this computer.
+  Your files stay private and secure.
+=========================================
