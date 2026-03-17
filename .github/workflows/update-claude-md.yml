@@ -1,0 +1,81 @@
+name: Auto-update CLAUDE.md
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - 'CLAUDE.md'
+
+jobs:
+  update-claude-md:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+
+      - name: Update CLAUDE.md
+        run: |
+          # Get commits since last CLAUDE.md update
+          LAST_CLAUDE_UPDATE=$(git log -1 --format="%H" -- CLAUDE.md 2>/dev/null || echo "")
+          if [ -n "$LAST_CLAUDE_UPDATE" ]; then
+            COMMITS=$(git log --oneline "$LAST_CLAUDE_UPDATE"..HEAD --no-merges -- . ':!CLAUDE.md' 2>/dev/null || git log --oneline -10 --no-merges -- . ':!CLAUDE.md')
+          else
+            COMMITS=$(git log --oneline -10 --no-merges -- . ':!CLAUDE.md')
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits to summarise"
+            exit 0
+          fi
+
+          if [ -n "$LAST_CLAUDE_UPDATE" ]; then
+            CHANGED_FILES=$(git diff --name-only "$LAST_CLAUDE_UPDATE"..HEAD -- . ':!CLAUDE.md' 2>/dev/null | head -20)
+            DIFF_STAT=$(git diff --shortstat "$LAST_CLAUDE_UPDATE"..HEAD -- . ':!CLAUDE.md' 2>/dev/null)
+          else
+            CHANGED_FILES=$(git diff --name-only HEAD~5..HEAD -- . ':!CLAUDE.md' 2>/dev/null | head -20)
+            DIFF_STAT=$(git diff --shortstat HEAD~5..HEAD -- . ':!CLAUDE.md' 2>/dev/null)
+          fi
+
+          COMMIT_SUMMARY=$(echo "$COMMITS" | sed 's/^[a-f0-9]* /- /' | head -10)
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          if [ ! -f CLAUDE.md ]; then
+            echo "No CLAUDE.md found"
+            exit 0
+          fi
+
+          PROJECT=$(grep "^## Project:" CLAUDE.md | sed 's/^## Project: //')
+          ONELINER=$(grep "^## One-liner:" CLAUDE.md | sed 's/^## One-liner: //')
+          STATUS=$(grep "^## Status:" CLAUDE.md | sed 's/^## Status: //')
+          TECHSTACK=$(grep "^## Tech Stack:" CLAUDE.md | sed 's/^## Tech Stack: //')
+          NEXTSTEPS=$(sed -n '/^## Next Steps:/,/^## /{ /^## Next Steps:/d; /^## /d; p; }' CLAUDE.md)
+          BLOCKERS=$(grep "^## Blockers:" CLAUDE.md | sed 's/^## Blockers: //')
+
+          NEW_SESSION="Auto-updated ${TIMESTAMP}. Recent changes: ${DIFF_STAT}. Commits since last update:
+          ${COMMIT_SUMMARY}"
+
+          cat > CLAUDE.md << CLAUDEEOF
+          ## Project: ${PROJECT}
+          ## One-liner: ${ONELINER}
+          ## Status: ${STATUS}
+          ## Tech Stack: ${TECHSTACK}
+          ## Last Session: ${NEW_SESSION}
+          ## Next Steps:
+          ${NEXTSTEPS}
+          ## Blockers: ${BLOCKERS}
+          CLAUDEEOF
+
+          sed -i 's/^          //' CLAUDE.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "AlertCentre Bot"
+          git config user.email "alertcentre-bot@drummond.holdings"
+          git add CLAUDE.md
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "Auto-update CLAUDE.md via AlertCentre"
+          git push
