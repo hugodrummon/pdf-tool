@@ -556,14 +556,14 @@ GLOBAL_STYLE = """
         background: white;
     }
     QTabBar::tab {
-        padding: 12px 28px;
-        font-size: 14px;
+        padding: 10px 16px;
+        font-size: 13px;
         font-weight: 500;
         border: none;
         border-bottom: 3px solid transparent;
         color: #666666;
         background: transparent;
-        min-width: 140px;
+        min-width: 70px;
     }
     QTabBar::tab:selected {
         color: #1976D2;
@@ -579,8 +579,8 @@ GLOBAL_STYLE = """
         font-weight: 500;
     }
     QLineEdit {
-        font-size: 14px;
-        padding: 10px 14px;
+        font-size: 13px;
+        padding: 8px 12px;
         border: 2px solid #e0e0e0;
         border-radius: 8px;
         background: white;
@@ -765,7 +765,10 @@ class CompressTab(QWidget):
         if os.path.getsize(self.input_path) <= TARGET_SIZE_BYTES:
             self.result_icon.setText("\u2705")
             self.result_text.setText(
-                f"This file is already under {TARGET_SIZE_MB} MB!\nSize: {fsize}")
+                f'<div style="text-align:center;">'
+                f'This file is already under {TARGET_SIZE_MB} MB!<br>'
+                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{fsize}</b>'
+                f'</div>')
             stem = Path(self.input_path).stem
             self.name_input.setText(stem)
             self.output_tmp_path = self.input_path
@@ -803,7 +806,10 @@ class CompressTab(QWidget):
         self.output_tmp_path = output_path
         self.result_icon.setText("\u2705")
         self.result_text.setText(
-            f"Original size: {human_size(orig_size)}\nCompressed size: {human_size(new_size)}")
+            f'<div style="text-align:center;">'
+            f'<span style="color:#888;">Original size:</span> <b>{human_size(orig_size)}</b><br>'
+            f'<span style="color:#888;">Compressed size:</span> <b style="color:#4CAF50;">{human_size(new_size)}</b>'
+            f'</div>')
 
         if new_size > TARGET_SIZE_BYTES:
             self.size_warning.setText(
@@ -834,7 +840,11 @@ class CompressTab(QWidget):
             shutil.copy2(self.output_tmp_path, dest)
             saved_name = os.path.basename(dest)
             self.result_icon.setText("\u2705")
-            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.result_text.setText(
+                f'<div style="text-align:center;">'
+                f'<span style="color:#888;">Saved as:</span> <b>{saved_name}</b><br>'
+                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(os.path.getsize(dest))}</b>'
+                f'</div>')
             self.save_btn.setEnabled(False)
             self.name_input.setEnabled(False)
         except Exception:
@@ -1066,7 +1076,10 @@ class MergeTab(QWidget):
         self.output_tmp_path = output_path
         self.result_icon.setText("\u2705")
         self.result_text.setText(
-            f"Combined original size: {human_size(combined_size)}\nFinal size: {human_size(final_size)}")
+            f'<div style="text-align:center;">'
+            f'<span style="color:#888;">Combined original size:</span> <b>{human_size(combined_size)}</b><br>'
+            f'<span style="color:#888;">Final size:</span> <b style="color:#4CAF50;">{human_size(final_size)}</b>'
+            f'</div>')
 
         if final_size > TARGET_SIZE_BYTES:
             self.size_warning.setText(
@@ -1098,7 +1111,11 @@ class MergeTab(QWidget):
             shutil.copy2(self.output_tmp_path, dest)
             saved_name = os.path.basename(dest)
             self.result_icon.setText("\u2705")
-            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.result_text.setText(
+                f'<div style="text-align:center;">'
+                f'<span style="color:#888;">Saved as:</span> <b>{saved_name}</b><br>'
+                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(os.path.getsize(dest))}</b>'
+                f'</div>')
             self.save_btn.setEnabled(False)
             self.name_input.setEnabled(False)
         except Exception:
@@ -1386,7 +1403,11 @@ class FlattenTab(QWidget):
             return
         self.output_tmp_path = output_path
         self.result_icon.setText("\u2705")
-        self.result_text.setText(f"Flattened successfully!\nSize: {human_size(new_size)}")
+        self.result_text.setText(
+            f'<div style="text-align:center;">'
+            f'Flattened successfully!<br>'
+            f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(new_size)}</b>'
+            f'</div>')
         self.name_input.setText(Path(self.input_path).stem + " - Flattened")
         self.save_btn.setEnabled(True)
         self.name_input.setEnabled(True)
@@ -1407,7 +1428,11 @@ class FlattenTab(QWidget):
             shutil.copy2(self.output_tmp_path, dest)
             saved_name = os.path.basename(dest)
             self.result_icon.setText("\u2705")
-            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.result_text.setText(
+                f'<div style="text-align:center;">'
+                f'<span style="color:#888;">Saved as:</span> <b>{saved_name}</b><br>'
+                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(os.path.getsize(dest))}</b>'
+                f'</div>')
             self.save_btn.setEnabled(False)
             self.name_input.setEnabled(False)
         except Exception:
@@ -1615,9 +1640,13 @@ class RedactTab(QWidget):
         self.output_tmp_path = output_path
         self.result_icon.setText("\u2705")
         if redaction_count > 0:
-            self.result_text.setText(f"Redacted {redaction_count} instance(s) across the document.\nSize: {human_size(new_size)}")
+            self.result_text.setText(
+                f'<div style="text-align:center;">'
+                f'Redacted {redaction_count} instance(s) across the document.<br>'
+                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(new_size)}</b>'
+                f'</div>')
         else:
-            self.result_text.setText("No matches found for the search terms.\nThe document was not modified.")
+            self.result_text.setText("No matches found for the search terms.<br>The document was not modified.")
         self.name_input.setText(Path(self.input_path).stem + " - Redacted")
         self.save_btn.setEnabled(True)
         self.name_input.setEnabled(True)
@@ -1638,7 +1667,11 @@ class RedactTab(QWidget):
             shutil.copy2(self.output_tmp_path, dest)
             saved_name = os.path.basename(dest)
             self.result_icon.setText("\u2705")
-            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.result_text.setText(
+                f'<div style="text-align:center;">'
+                f'<span style="color:#888;">Saved as:</span> <b>{saved_name}</b><br>'
+                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(os.path.getsize(dest))}</b>'
+                f'</div>')
             self.save_btn.setEnabled(False)
             self.name_input.setEnabled(False)
         except Exception:
@@ -1813,7 +1846,11 @@ class OCRTab(QWidget):
             return
         self.output_tmp_path = output_path
         self.result_icon.setText("\u2705")
-        self.result_text.setText(f"OCR complete! Text is now searchable and selectable.\nSize: {human_size(new_size)}")
+        self.result_text.setText(
+            f'<div style="text-align:center;">'
+            f'OCR complete! Text is now searchable and selectable.<br>'
+            f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(new_size)}</b>'
+            f'</div>')
         self.name_input.setText(Path(self.input_path).stem + " - OCR")
         self.save_btn.setEnabled(True)
         self.name_input.setEnabled(True)
@@ -1834,7 +1871,11 @@ class OCRTab(QWidget):
             shutil.copy2(self.output_tmp_path, dest)
             saved_name = os.path.basename(dest)
             self.result_icon.setText("\u2705")
-            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.result_text.setText(
+                f'<div style="text-align:center;">'
+                f'<span style="color:#888;">Saved as:</span> <b>{saved_name}</b><br>'
+                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(os.path.getsize(dest))}</b>'
+                f'</div>')
             self.save_btn.setEnabled(False)
             self.name_input.setEnabled(False)
         except Exception:
@@ -1876,12 +1917,12 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(subtitle)
 
         tabs = QTabWidget()
-        tabs.addTab(CompressTab(self.gs_exe), "  Compress  ")
-        tabs.addTab(MergeTab(self.gs_exe), "  Merge  ")
-        tabs.addTab(RenameTab(), "  Rename  ")
-        tabs.addTab(RedactTab(), "  Redact  ")
-        tabs.addTab(FlattenTab(), "  Flatten  ")
-        tabs.addTab(OCRTab(), "  OCR  ")
+        tabs.addTab(CompressTab(self.gs_exe), "Compress")
+        tabs.addTab(MergeTab(self.gs_exe), "Merge")
+        tabs.addTab(RenameTab(), "Rename")
+        tabs.addTab(RedactTab(), "Redact")
+        tabs.addTab(FlattenTab(), "Flatten")
+        tabs.addTab(OCRTab(), "OCR")
         main_layout.addWidget(tabs)
 
         if not self.gs_exe:
@@ -1948,10 +1989,10 @@ class MainWindow(QMainWindow):
                 pass  # widget may have been deleted
 
         # Scale tab bar font via stylesheet
-        tab_size = max(10, int(14 * scale))
-        tab_padding_h = max(12, int(28 * scale))
-        tab_padding_v = max(8, int(12 * scale))
-        tab_min_w = max(80, int(140 * scale))
+        tab_size = max(10, int(13 * scale))
+        tab_padding_h = max(10, int(16 * scale))
+        tab_padding_v = max(6, int(10 * scale))
+        tab_min_w = max(50, int(70 * scale))
         self._tabs.tabBar().setStyleSheet(f"""
             QTabBar::tab {{
                 padding: {tab_padding_v}px {tab_padding_h}px;
