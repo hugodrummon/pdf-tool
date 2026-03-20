@@ -31,8 +31,8 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt Pillow
 
-      - name: Install Ghostscript via Chocolatey
-        run: choco install ghostscript --yes --no-progress
+      - name: Install Ghostscript and Tesseract via Chocolatey
+        run: choco install ghostscript tesseract --yes --no-progress
         shell: cmd
 
       - name: Prepare Ghostscript bundle
@@ -51,6 +51,19 @@ jobs:
           Write-Host "Ghostscript bundle prepared"
         shell: pwsh
 
+      - name: Prepare Tesseract bundle
+        run: |
+          $tessDir = "C:\Program Files\Tesseract-OCR"
+          if (Test-Path $tessDir) {
+            mkdir tesseract_bundle
+            Copy-Item "$tessDir\*" "tesseract_bundle\" -Recurse
+            Write-Host "Tesseract bundle prepared"
+          } else {
+            Write-Error "Tesseract not found at $tessDir"
+            exit 1
+          }
+        shell: pwsh
+
       - name: Generate app icon
         run: python create_icon.py
 
@@ -60,6 +73,7 @@ jobs:
             --name "PDF Tool" `
             --icon "app_icon.ico" `
             --add-data "gs_bundle;gs" `
+            --add-data "tesseract_bundle;tesseract" `
             pdf_tool.py
         shell: pwsh
 
