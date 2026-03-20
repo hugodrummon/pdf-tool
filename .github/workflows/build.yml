@@ -8,10 +8,20 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract version from source
+        id: version
+        run: |
+          $version = (Select-String -Path pdf_tool.py -Pattern 'APP_VERSION\s*=\s*"(.*?)"').Matches.Groups[1].Value
+          Write-Host "Version: $version"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+        shell: pwsh
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -89,3 +99,17 @@ jobs:
           name: PDF-Tool-Standalone
           path: dist/PDF Tool.exe
           retention-days: 90
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: PDF Tool v${{ steps.version.outputs.version }}
+          body: |
+            ## PDF Tool v${{ steps.version.outputs.version }}
+
+            Download **Install PDF Tool.exe** below to install or update.
+          files: |
+            installer_output/Install PDF Tool.exe
+            dist/PDF Tool.exe
+          make_latest: true

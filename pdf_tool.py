@@ -4,20 +4,27 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
+APP_VERSION = "1.0.0"
+GITHUB_REPO = "hugodrummon/pdf-tool"
+
 import sys
 import os
 import subprocess
 import shutil
 import tempfile
+import json
+import webbrowser
 from pathlib import Path
+from urllib.request import urlopen, Request
+from urllib.error import URLError
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QProgressBar, QTabWidget,
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox,
-    QSizePolicy, QFrame, QSpacerItem, QAbstractItemView
+    QSizePolicy, QFrame, QSpacerItem, QAbstractItemView, QDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QSize
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QSize, QTimer
 from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QDragEnterEvent, QDropEvent
 
 from PyPDF2 import PdfMerger
@@ -99,6 +106,9 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
     if os.path.isdir(gs_lib_path):
         env["GS_LIB"] = f"{gs_lib_path};{gs_resource_path}"
 
+    # Get CPU count for multi-threaded rendering
+    num_threads = min(os.cpu_count() or 2, 8)
+
     args = [
         gs_exe,
         "-sDEVICE=pdfwrite",
@@ -107,6 +117,12 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
         "-dNOPAUSE",
         "-dBATCH",
         "-dQUIET",
+        f"-dNumRenderingThreads={num_threads}",
+        "-dDetectDuplicateImages=true",
+        "-dCompressFonts=true",
+        "-dSubsetFonts=true",
+        "-dColorImageDownsampleType=/Bicubic",
+        "-dGrayImageDownsampleType=/Bicubic",
         f"-sOutputFile={output_path}",
         input_path,
     ]
@@ -141,7 +157,6 @@ QUALITY_LEVELS = ["/ebook", "/screen"]
 # ---------------------------------------------------------------------------
 
 class CompressWorker(QThread):
-    progress = pyqtSignal(int)
     finished = pyqtSignal(bool, str, int, int)
 
     def __init__(self, input_path: str, gs_exe: str):
@@ -151,39 +166,35 @@ class CompressWorker(QThread):
 
     def run(self):
         orig_size = os.path.getsize(self.input_path)
-        self.progress.emit(10)
 
         if orig_size <= TARGET_SIZE_BYTES:
-            self.progress.emit(100)
             self.finished.emit(True, self.input_path, orig_size, orig_size)
             return
 
         tmp_dir = tempfile.mkdtemp()
         output_path = os.path.join(tmp_dir, "compressed.pdf")
 
-        step = 30
-        for quality in QUALITY_LEVELS:
-            self.progress.emit(step)
-            ok = compress_pdf(self.input_path, output_path, self.gs_exe, quality)
-            if ok and os.path.isfile(output_path):
-                new_size = os.path.getsize(output_path)
-                if new_size <= TARGET_SIZE_BYTES:
-                    self.progress.emit(100)
-                    self.finished.emit(True, output_path, orig_size, new_size)
-                    return
-            step += 30
+        # Pick quality based on file size — skip gentle /ebook for large files
+        # since it's slow and often not aggressive enough anyway
+        if orig_size > 50 * 1024 * 1024:  # > 50 MB: go straight to aggressive
+            quality = "/screen"
+        else:
+            quality = "/ebook"
 
-        if os.path.isfile(output_path):
+        ok = compress_pdf(self.input_path, output_path, self.gs_exe, quality)
+        if ok and os.path.isfile(output_path):
             new_size = os.path.getsize(output_path)
-            self.progress.emit(100)
+            # If /ebook wasn't enough and we haven't tried /screen yet, try it
+            if new_size > TARGET_SIZE_BYTES and quality == "/ebook":
+                ok2 = compress_pdf(self.input_path, output_path, self.gs_exe, "/screen")
+                if ok2 and os.path.isfile(output_path):
+                    new_size = os.path.getsize(output_path)
             self.finished.emit(True, output_path, orig_size, new_size)
         else:
-            self.progress.emit(100)
             self.finished.emit(False, "", orig_size, 0)
 
 
 class MergeWorker(QThread):
-    progress = pyqtSignal(int)
     finished = pyqtSignal(bool, str, int, int)
 
     def __init__(self, file_paths: list, gs_exe: str):
@@ -192,8 +203,6 @@ class MergeWorker(QThread):
         self.gs_exe = gs_exe
 
     def run(self):
-        self.progress.emit(5)
-
         tmp_dir = tempfile.mkdtemp()
         merged_path = os.path.join(tmp_dir, "merged.pdf")
         combined_size = sum(os.path.getsize(p) for p in self.file_paths)
@@ -205,38 +214,122 @@ class MergeWorker(QThread):
             merger.write(merged_path)
             merger.close()
         except Exception:
-            self.progress.emit(100)
             self.finished.emit(False, "", combined_size, 0)
             return
 
-        self.progress.emit(40)
         merged_size = os.path.getsize(merged_path)
 
         if merged_size <= TARGET_SIZE_BYTES:
-            self.progress.emit(100)
             self.finished.emit(True, merged_path, combined_size, merged_size)
             return
 
         compressed_path = os.path.join(tmp_dir, "compressed.pdf")
-        step = 50
-        for quality in QUALITY_LEVELS:
-            self.progress.emit(step)
-            ok = compress_pdf(merged_path, compressed_path, self.gs_exe, quality)
-            if ok and os.path.isfile(compressed_path):
-                new_size = os.path.getsize(compressed_path)
-                if new_size <= TARGET_SIZE_BYTES:
-                    self.progress.emit(100)
-                    self.finished.emit(True, compressed_path, combined_size, new_size)
-                    return
-            step += 20
 
-        if os.path.isfile(compressed_path):
-            self.progress.emit(100)
-            self.finished.emit(True, compressed_path, combined_size,
-                               os.path.getsize(compressed_path))
+        # Pick quality based on merged size
+        if merged_size > 50 * 1024 * 1024:
+            quality = "/screen"
         else:
-            self.progress.emit(100)
+            quality = "/ebook"
+
+        ok = compress_pdf(merged_path, compressed_path, self.gs_exe, quality)
+        if ok and os.path.isfile(compressed_path):
+            new_size = os.path.getsize(compressed_path)
+            if new_size > TARGET_SIZE_BYTES and quality == "/ebook":
+                ok2 = compress_pdf(merged_path, compressed_path, self.gs_exe, "/screen")
+                if ok2 and os.path.isfile(compressed_path):
+                    new_size = os.path.getsize(compressed_path)
+            self.finished.emit(True, compressed_path, combined_size, new_size)
+        else:
             self.finished.emit(True, merged_path, combined_size, merged_size)
+
+
+class UpdateChecker(QThread):
+    """Check GitHub Releases for a newer version. Runs in background, silent on failure."""
+    update_available = pyqtSignal(str, str)  # (latest_version, download_url)
+
+    def run(self):
+        try:
+            url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            req = Request(url, headers={"Accept": "application/vnd.github.v3+json"})
+            with urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+
+            latest = data.get("tag_name", "").lstrip("v")
+            if not latest:
+                return
+
+            # Compare versions
+            current_parts = [int(x) for x in APP_VERSION.split(".")]
+            latest_parts = [int(x) for x in latest.split(".")]
+            if latest_parts > current_parts:
+                # Find the installer asset download URL, fall back to release page
+                download_url = data.get("html_url", "")
+                for asset in data.get("assets", []):
+                    if "install" in asset["name"].lower() and asset["name"].endswith(".exe"):
+                        download_url = asset["browser_download_url"]
+                        break
+                self.update_available.emit(latest, download_url)
+        except Exception:
+            pass  # Silent fail — no internet, no problem
+
+
+class UpdateDialog(QDialog):
+    """Dialog shown when a new version is available."""
+    def __init__(self, parent, latest_version, download_url):
+        super().__init__(parent)
+        self.download_url = download_url
+        self.setWindowTitle("Update Available")
+        self.setFixedSize(420, 200)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        title = QLabel("A new version is available!")
+        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        info = QLabel(
+            f"Your version: {APP_VERSION}\n"
+            f"Latest version: {latest_version}")
+        info.setFont(QFont("Segoe UI", 11))
+        info.setAlignment(Qt.AlignCenter)
+        layout.addWidget(info)
+
+        btn_row = QHBoxLayout()
+
+        download_btn = QPushButton("Download Update")
+        download_btn.setFont(QFont("Segoe UI", 12))
+        download_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50; color: white;
+                border: none; padding: 10px 24px; border-radius: 8px;
+            }
+            QPushButton:hover { background-color: #43A047; }
+        """)
+        download_btn.setCursor(Qt.PointingHandCursor)
+        download_btn.clicked.connect(self._download)
+        btn_row.addWidget(download_btn)
+
+        later_btn = QPushButton("Later")
+        later_btn.setFont(QFont("Segoe UI", 12))
+        later_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f5f5f5; color: #333;
+                border: 1px solid #e0e0e0; padding: 10px 24px; border-radius: 8px;
+            }
+            QPushButton:hover { background-color: #eee; }
+        """)
+        later_btn.setCursor(Qt.PointingHandCursor)
+        later_btn.clicked.connect(self.close)
+        btn_row.addWidget(later_btn)
+
+        layout.addLayout(btn_row)
+
+    def _download(self):
+        webbrowser.open(self.download_url)
+        self.close()
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +547,12 @@ class CompressTab(QWidget):
         self.output_tmp_path = ""
         self.worker = None
 
+        # Smooth progress animation
+        self._progress_timer = QTimer()
+        self._progress_timer.setInterval(150)
+        self._progress_timer.timeout.connect(self._tick_progress)
+        self._progress_value = 0.0
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
@@ -465,6 +564,7 @@ class CompressTab(QWidget):
         self.file_info = QLabel("")
         self.file_info.setFont(QFont("Segoe UI", 12))
         self.file_info.setAlignment(Qt.AlignCenter)
+        self.file_info.setWordWrap(True)
         self.file_info.hide()
         layout.addWidget(self.file_info)
 
@@ -530,10 +630,12 @@ class CompressTab(QWidget):
         layout.addStretch()
 
     def _reset(self):
+        self._progress_timer.stop()
         self.result_frame.hide()
         self.error_label.hide()
         self.progress.hide()
         self.progress.setValue(0)
+        self._progress_value = 0.0
         self.size_warning.hide()
         self.save_btn.setEnabled(True)
         self.name_input.setEnabled(True)
@@ -558,14 +660,23 @@ class CompressTab(QWidget):
 
         self.progress.show()
         self.progress.setValue(0)
+        self._progress_value = 0.0
+        self._progress_timer.start()
         self.drop_zone.setEnabled(False)
 
         self.worker = CompressWorker(self.input_path, self.gs_exe)
-        self.worker.progress.connect(self.progress.setValue)
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
 
+    def _tick_progress(self):
+        """Smoothly advance progress bar, slowing as it approaches 90%."""
+        remaining = 90.0 - self._progress_value
+        self._progress_value += remaining * 0.03
+        self.progress.setValue(int(self._progress_value))
+
     def _on_finished(self, success, output_path, orig_size, new_size):
+        self._progress_timer.stop()
+        self.progress.setValue(100)
         self.drop_zone.setEnabled(True)
         self.progress.hide()
 
@@ -586,7 +697,7 @@ class CompressTab(QWidget):
                 "The original PDF may contain high-resolution scans.")
             self.size_warning.show()
 
-        self.name_input.setText(Path(self.input_path).stem)
+        self.name_input.setText(Path(self.input_path).stem + " - Compressed")
         self.result_frame.show()
 
     def _save(self):
@@ -597,22 +708,19 @@ class CompressTab(QWidget):
         if not name.lower().endswith(".pdf"):
             name += ".pdf"
 
+        # Open a Save As dialog so the user picks where to save
         dest_dir = os.path.dirname(self.input_path)
-        dest = os.path.join(dest_dir, name)
-
-        if os.path.exists(dest) and os.path.abspath(dest) != os.path.abspath(self.input_path):
-            reply = QMessageBox.question(
-                self, "File already exists",
-                f"A file called \"{name}\" already exists in that folder.\n\nDo you want to replace it?",
-                QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.No:
-                return
+        dest, _ = QFileDialog.getSaveFileName(
+            self, "Save compressed PDF", os.path.join(dest_dir, name),
+            "PDF Files (*.pdf)")
+        if not dest:
+            return
 
         try:
-            if os.path.abspath(self.output_tmp_path) != os.path.abspath(dest):
-                shutil.copy2(self.output_tmp_path, dest)
+            shutil.copy2(self.output_tmp_path, dest)
+            saved_name = os.path.basename(dest)
             self.result_icon.setText("\u2705")
-            self.result_text.setText(f"Saved as: {name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
             self.save_btn.setEnabled(False)
             self.name_input.setEnabled(False)
         except Exception:
@@ -632,6 +740,12 @@ class MergeTab(QWidget):
         self.file_paths = []
         self.output_tmp_path = ""
         self.worker = None
+
+        # Smooth progress animation
+        self._progress_timer = QTimer()
+        self._progress_timer.setInterval(150)
+        self._progress_timer.timeout.connect(self._tick_progress)
+        self._progress_value = 0.0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -807,15 +921,24 @@ class MergeTab(QWidget):
         self.size_warning.hide()
         self.progress.show()
         self.progress.setValue(0)
+        self._progress_value = 0.0
+        self._progress_timer.start()
         self.merge_btn.setEnabled(False)
         self.drop_zone.setEnabled(False)
 
         self.worker = MergeWorker(list(self.file_paths), self.gs_exe)
-        self.worker.progress.connect(self.progress.setValue)
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
 
+    def _tick_progress(self):
+        """Smoothly advance progress bar, slowing as it approaches 90%."""
+        remaining = 90.0 - self._progress_value
+        self._progress_value += remaining * 0.03
+        self.progress.setValue(int(self._progress_value))
+
     def _on_finished(self, success, output_path, combined_size, final_size):
+        self._progress_timer.stop()
+        self.progress.setValue(100)
         self.progress.hide()
         self.merge_btn.setEnabled(True)
         self.drop_zone.setEnabled(True)
@@ -851,20 +974,17 @@ class MergeTab(QWidget):
             name += ".pdf"
 
         dest_dir = os.path.dirname(self.file_paths[0]) if self.file_paths else ""
-        dest = os.path.join(dest_dir, name)
-
-        if os.path.exists(dest):
-            reply = QMessageBox.question(
-                self, "File already exists",
-                f"A file called \"{name}\" already exists in that folder.\n\nDo you want to replace it?",
-                QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.No:
-                return
+        dest, _ = QFileDialog.getSaveFileName(
+            self, "Save merged PDF", os.path.join(dest_dir, name),
+            "PDF Files (*.pdf)")
+        if not dest:
+            return
 
         try:
             shutil.copy2(self.output_tmp_path, dest)
+            saved_name = os.path.basename(dest)
             self.result_icon.setText("\u2705")
-            self.result_text.setText(f"Saved as: {name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
             self.save_btn.setEnabled(False)
             self.name_input.setEnabled(False)
         except Exception:
@@ -1005,10 +1125,12 @@ class RenameTab(QWidget):
 # ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
+    BASE_WIDTH = 780  # Design width for scale factor = 1.0
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PDF Tool")
-        self.setMinimumSize(700, 600)
+        self.setMinimumSize(500, 400)
         self.resize(780, 650)
 
         self.gs_exe = find_ghostscript()
@@ -1028,6 +1150,7 @@ class MainWindow(QMainWindow):
         subtitle.setFont(QFont("Segoe UI", 11))
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet("color: #888888; margin-bottom: 12px;")
+        subtitle.setWordWrap(True)
         main_layout.addWidget(subtitle)
 
         tabs = QTabWidget()
@@ -1046,6 +1169,87 @@ class MainWindow(QMainWindow):
             warn.setAlignment(Qt.AlignCenter)
             warn.setWordWrap(True)
             main_layout.addWidget(warn)
+
+        # Store references for responsive scaling
+        self._header = header
+        self._subtitle = subtitle
+        self._tabs = tabs
+
+        # Collect all scalable widgets from tabs
+        self._font_map = []  # list of (widget, base_size, bold)
+        self._font_map.append((header, 22, True))
+        self._font_map.append((subtitle, 11, False))
+
+        for i in range(tabs.count()):
+            tab = tabs.widget(i)
+            self._collect_scalable_widgets(tab)
+
+        # Apply initial scale
+        self._apply_scale()
+
+        # Check for updates in background
+        self._update_checker = UpdateChecker()
+        self._update_checker.update_available.connect(self._show_update_dialog)
+        self._update_checker.start()
+
+    def _show_update_dialog(self, latest_version, download_url):
+        dialog = UpdateDialog(self, latest_version, download_url)
+        dialog.exec_()
+
+    def _collect_scalable_widgets(self, widget):
+        """Walk the widget tree and record every widget's base font size."""
+        for child in widget.findChildren(QWidget):
+            font = child.font()
+            size = font.pointSize()
+            if size <= 0:
+                size = font.pixelSize()
+            if size > 0:
+                bold = font.weight() >= QFont.Bold
+                self._font_map.append((child, size, bold))
+
+    def _get_scale(self):
+        width = self.width()
+        scale = width / self.BASE_WIDTH
+        return max(0.65, min(scale, 1.5))
+
+    def _apply_scale(self):
+        scale = self._get_scale()
+        for widget, base_size, bold in self._font_map:
+            try:
+                new_size = max(8, int(base_size * scale))
+                weight = QFont.Bold if bold else QFont.Normal
+                widget.setFont(QFont("Segoe UI", new_size, weight))
+            except RuntimeError:
+                pass  # widget may have been deleted
+
+        # Scale tab bar font via stylesheet
+        tab_size = max(10, int(14 * scale))
+        tab_padding_h = max(12, int(28 * scale))
+        tab_padding_v = max(8, int(12 * scale))
+        tab_min_w = max(80, int(140 * scale))
+        self._tabs.tabBar().setStyleSheet(f"""
+            QTabBar::tab {{
+                padding: {tab_padding_v}px {tab_padding_h}px;
+                font-size: {tab_size}px;
+                font-weight: 500;
+                border: none;
+                border-bottom: 3px solid transparent;
+                color: #666666;
+                background: transparent;
+                min-width: {tab_min_w}px;
+            }}
+            QTabBar::tab:selected {{
+                color: #1976D2;
+                border-bottom: 3px solid #1976D2;
+            }}
+            QTabBar::tab:hover {{
+                color: #333333;
+            }}
+        """)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_scale()
 
 
 # ---------------------------------------------------------------------------
