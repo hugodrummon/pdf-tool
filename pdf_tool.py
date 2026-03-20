@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
