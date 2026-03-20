@@ -1,10 +1,10 @@
 """
-PDF Tool — Compress, Merge, and Rename PDFs locally.
+PDF Tool — Compress, Merge, Rename, Redact, Flatten, and OCR PDFs locally.
 Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -22,12 +22,28 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QProgressBar, QTabWidget,
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox,
-    QSizePolicy, QFrame, QSpacerItem, QAbstractItemView, QDialog
+    QSizePolicy, QFrame, QSpacerItem, QAbstractItemView, QDialog,
+    QTextEdit
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QSize, QTimer
 from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QDragEnterEvent, QDropEvent
 
 from PyPDF2 import PdfMerger
+import fitz  # PyMuPDF — for redaction and flattening
+
+# Tesseract OCR — optional, works if installed
+try:
+    import pytesseract
+    # Check bundled Tesseract first, then system PATH
+    _bundle_dir = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        _bundle_dir = sys._MEIPASS
+    _bundled_tess = os.path.join(_bundle_dir, "tesseract", "tesseract.exe")
+    if os.path.isfile(_bundled_tess):
+        pytesseract.pytesseract.tesseract_cmd = _bundled_tess
+    HAS_TESSERACT = bool(shutil.which(pytesseract.pytesseract.tesseract_cmd or "tesseract") or os.path.isfile(_bundled_tess))
+except ImportError:
+    HAS_TESSERACT = False
 
 
 # ---------------------------------------------------------------------------
@@ -1121,6 +1137,705 @@ class RenameTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Flatten tab
+# ---------------------------------------------------------------------------
+
+class FlattenWorker(QThread):
+    finished = pyqtSignal(bool, str, int, int)
+
+    def __init__(self, input_path: str):
+        super().__init__()
+        self.input_path = input_path
+
+    def run(self):
+        orig_size = os.path.getsize(self.input_path)
+        try:
+            tmp_dir = tempfile.mkdtemp()
+            output_path = os.path.join(tmp_dir, "flattened.pdf")
+            doc = fitz.open(self.input_path)
+            for page in doc:
+                # Flatten annotations (stamps, comments, form fields) into the page
+                annots = list(page.annots()) if page.annots() else []
+                for annot in annots:
+                    annot.set_flags(fitz.PDF_ANNOT_IS_PRINT)
+                page._apply_redactions() if page.first_redact_annot else None
+            # Save with garbage collection and deflation for clean output
+            doc.save(output_path, garbage=4, deflate=True)
+            doc.close()
+            new_size = os.path.getsize(output_path)
+            self.finished.emit(True, output_path, orig_size, new_size)
+        except Exception:
+            self.finished.emit(False, "", orig_size, 0)
+
+
+class FlattenTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.input_path = ""
+        self.output_tmp_path = ""
+        self.worker = None
+
+        # Smooth progress animation
+        self._progress_timer = QTimer()
+        self._progress_timer.setInterval(150)
+        self._progress_timer.timeout.connect(self._tick_progress)
+        self._progress_value = 0.0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        self.drop_zone = DropZone("Drop your PDF here to flatten it")
+        self.drop_zone.files_dropped.connect(self._on_file_dropped)
+        layout.addWidget(self.drop_zone)
+
+        info = QLabel("Flattening makes annotations, stamps, form fields,\n"
+                       "and comments permanent and uneditable.")
+        info.setFont(QFont("Segoe UI", 11))
+        info.setAlignment(Qt.AlignCenter)
+        info.setStyleSheet("color: #888888;")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        self.file_info = QLabel("")
+        self.file_info.setFont(QFont("Segoe UI", 12))
+        self.file_info.setAlignment(Qt.AlignCenter)
+        self.file_info.setWordWrap(True)
+        self.file_info.hide()
+        layout.addWidget(self.file_info)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.hide()
+        layout.addWidget(self.progress)
+
+        self.result_frame = QFrame()
+        result_layout = QVBoxLayout(self.result_frame)
+        result_layout.setSpacing(12)
+
+        self.result_icon = QLabel()
+        self.result_icon.setFont(QFont("Segoe UI", 48))
+        self.result_icon.setAlignment(Qt.AlignCenter)
+        result_layout.addWidget(self.result_icon)
+
+        self.result_text = QLabel("")
+        self.result_text.setFont(QFont("Segoe UI", 13))
+        self.result_text.setAlignment(Qt.AlignCenter)
+        self.result_text.setWordWrap(True)
+        result_layout.addWidget(self.result_text)
+
+        save_label = QLabel("What would you like to call this file?")
+        save_label.setFont(QFont("Segoe UI", 13))
+        save_label.setAlignment(Qt.AlignCenter)
+        result_layout.addWidget(save_label)
+
+        name_row = QHBoxLayout()
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Type a name for the file")
+        name_row.addWidget(self.name_input)
+        pdf_label = QLabel(".pdf")
+        pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        pdf_label.setStyleSheet("color: #888;")
+        name_row.addWidget(pdf_label)
+        result_layout.addLayout(name_row)
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setStyleSheet(BTN_SUCCESS)
+        self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.clicked.connect(self._save)
+        result_layout.addWidget(self.save_btn, alignment=Qt.AlignCenter)
+
+        self.result_frame.hide()
+        layout.addWidget(self.result_frame)
+
+        self.error_label = QLabel("")
+        self.error_label.setFont(QFont("Segoe UI", 13))
+        self.error_label.setStyleSheet("color: #d32f2f;")
+        self.error_label.setAlignment(Qt.AlignCenter)
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
+
+        layout.addStretch()
+
+    def _on_file_dropped(self, paths):
+        self._progress_timer.stop()
+        self.result_frame.hide()
+        self.error_label.hide()
+        self.progress.hide()
+        self.progress.setValue(0)
+        self._progress_value = 0.0
+
+        self.input_path = paths[0]
+        fname = os.path.basename(self.input_path)
+        fsize = human_size(os.path.getsize(self.input_path))
+        self.file_info.setText(f"Selected: {fname} ({fsize})")
+        self.file_info.show()
+
+        self.progress.show()
+        self._progress_timer.start()
+        self.drop_zone.setEnabled(False)
+
+        self.worker = FlattenWorker(self.input_path)
+        self.worker.finished.connect(self._on_finished)
+        self.worker.start()
+
+    def _tick_progress(self):
+        remaining = 90.0 - self._progress_value
+        self._progress_value += remaining * 0.05
+        self.progress.setValue(int(self._progress_value))
+
+    def _on_finished(self, success, output_path, orig_size, new_size):
+        self._progress_timer.stop()
+        self.progress.setValue(100)
+        self.drop_zone.setEnabled(True)
+        self.progress.hide()
+
+        if not success:
+            self.error_label.setText(
+                "Something went wrong \u2014 please try again or contact your IT team.")
+            self.error_label.show()
+            return
+
+        self.output_tmp_path = output_path
+        self.result_icon.setText("\u2705")
+        self.result_text.setText(
+            f"Flattened successfully!\nSize: {human_size(new_size)}")
+        self.name_input.setText(Path(self.input_path).stem + " - Flattened")
+        self.save_btn.setEnabled(True)
+        self.name_input.setEnabled(True)
+        self.result_frame.show()
+
+    def _save(self):
+        name = self.name_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Name needed", "Please type a name for the file.")
+            return
+        if not name.lower().endswith(".pdf"):
+            name += ".pdf"
+
+        dest_dir = os.path.dirname(self.input_path)
+        dest, _ = QFileDialog.getSaveFileName(
+            self, "Save flattened PDF", os.path.join(dest_dir, name),
+            "PDF Files (*.pdf)")
+        if not dest:
+            return
+
+        try:
+            shutil.copy2(self.output_tmp_path, dest)
+            saved_name = os.path.basename(dest)
+            self.result_icon.setText("\u2705")
+            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.save_btn.setEnabled(False)
+            self.name_input.setEnabled(False)
+        except Exception:
+            self.error_label.setText(
+                "Something went wrong while saving \u2014 please try again or contact your IT team.")
+            self.error_label.show()
+
+
+# ---------------------------------------------------------------------------
+# Redact tab
+# ---------------------------------------------------------------------------
+
+class RedactWorker(QThread):
+    finished = pyqtSignal(bool, str, int, int, int)  # success, path, orig_size, new_size, redaction_count
+
+    def __init__(self, input_path: str, search_terms: list):
+        super().__init__()
+        self.input_path = input_path
+        self.search_terms = search_terms
+
+    def run(self):
+        orig_size = os.path.getsize(self.input_path)
+        try:
+            tmp_dir = tempfile.mkdtemp()
+            output_path = os.path.join(tmp_dir, "redacted.pdf")
+            doc = fitz.open(self.input_path)
+            total_redactions = 0
+
+            for page in doc:
+                for term in self.search_terms:
+                    areas = page.search_for(term)
+                    for area in areas:
+                        # Add redaction annotation — black fill, truly removes text
+                        page.add_redact_annot(area, fill=(0, 0, 0))
+                        total_redactions += 1
+                # Apply all redactions — permanently removes underlying content
+                page.apply_redactions()
+
+            doc.save(output_path, garbage=4, deflate=True)
+            doc.close()
+            new_size = os.path.getsize(output_path)
+            self.finished.emit(True, output_path, orig_size, new_size, total_redactions)
+        except Exception:
+            self.finished.emit(False, "", orig_size, 0, 0)
+
+
+class RedactTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.input_path = ""
+        self.output_tmp_path = ""
+        self.worker = None
+
+        # Smooth progress animation
+        self._progress_timer = QTimer()
+        self._progress_timer.setInterval(150)
+        self._progress_timer.timeout.connect(self._tick_progress)
+        self._progress_value = 0.0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        self.drop_zone = DropZone("Drop your PDF here to redact it")
+        self.drop_zone.files_dropped.connect(self._on_file_dropped)
+        layout.addWidget(self.drop_zone)
+
+        info = QLabel("Redaction permanently removes sensitive text from the PDF.\n"
+                       "The original content cannot be recovered.")
+        info.setFont(QFont("Segoe UI", 11))
+        info.setAlignment(Qt.AlignCenter)
+        info.setStyleSheet("color: #888888;")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        self.file_info = QLabel("")
+        self.file_info.setFont(QFont("Segoe UI", 12))
+        self.file_info.setAlignment(Qt.AlignCenter)
+        self.file_info.setWordWrap(True)
+        self.file_info.hide()
+        layout.addWidget(self.file_info)
+
+        # Search terms input
+        self.search_frame = QFrame()
+        search_layout = QVBoxLayout(self.search_frame)
+        search_layout.setSpacing(12)
+
+        search_label = QLabel("Enter text to redact (one per line):")
+        search_label.setFont(QFont("Segoe UI", 13))
+        search_layout.addWidget(search_label)
+
+        self.search_input = QTextEdit()
+        self.search_input.setFont(QFont("Segoe UI", 12))
+        self.search_input.setPlaceholderText("e.g.\nJohn Smith\n555-123-4567\nConfidential")
+        self.search_input.setMaximumHeight(120)
+        self.search_input.setStyleSheet("""
+            QTextEdit {
+                border: 2px solid #e0e0e0; border-radius: 8px;
+                padding: 8px; background: white;
+            }
+            QTextEdit:focus { border-color: #1976D2; }
+        """)
+        search_layout.addWidget(self.search_input)
+
+        self.redact_btn = QPushButton("Redact")
+        self.redact_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f; color: white;
+                border: none; padding: 12px 32px; border-radius: 8px;
+                font-size: 14px; font-weight: 500;
+            }
+            QPushButton:hover { background-color: #c62828; }
+            QPushButton:pressed { background-color: #b71c1c; }
+            QPushButton:disabled { background-color: #BDBDBD; color: #888888; }
+        """)
+        self.redact_btn.setCursor(Qt.PointingHandCursor)
+        self.redact_btn.clicked.connect(self._start_redact)
+        search_layout.addWidget(self.redact_btn, alignment=Qt.AlignCenter)
+
+        self.search_frame.hide()
+        layout.addWidget(self.search_frame)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.hide()
+        layout.addWidget(self.progress)
+
+        self.result_frame = QFrame()
+        result_layout = QVBoxLayout(self.result_frame)
+        result_layout.setSpacing(12)
+
+        self.result_icon = QLabel()
+        self.result_icon.setFont(QFont("Segoe UI", 48))
+        self.result_icon.setAlignment(Qt.AlignCenter)
+        result_layout.addWidget(self.result_icon)
+
+        self.result_text = QLabel("")
+        self.result_text.setFont(QFont("Segoe UI", 13))
+        self.result_text.setAlignment(Qt.AlignCenter)
+        self.result_text.setWordWrap(True)
+        result_layout.addWidget(self.result_text)
+
+        save_label = QLabel("What would you like to call this file?")
+        save_label.setFont(QFont("Segoe UI", 13))
+        save_label.setAlignment(Qt.AlignCenter)
+        result_layout.addWidget(save_label)
+
+        name_row = QHBoxLayout()
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Type a name for the file")
+        name_row.addWidget(self.name_input)
+        pdf_label = QLabel(".pdf")
+        pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        pdf_label.setStyleSheet("color: #888;")
+        name_row.addWidget(pdf_label)
+        result_layout.addLayout(name_row)
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setStyleSheet(BTN_SUCCESS)
+        self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.clicked.connect(self._save)
+        result_layout.addWidget(self.save_btn, alignment=Qt.AlignCenter)
+
+        self.result_frame.hide()
+        layout.addWidget(self.result_frame)
+
+        self.error_label = QLabel("")
+        self.error_label.setFont(QFont("Segoe UI", 13))
+        self.error_label.setStyleSheet("color: #d32f2f;")
+        self.error_label.setAlignment(Qt.AlignCenter)
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
+
+        layout.addStretch()
+
+    def _on_file_dropped(self, paths):
+        self._progress_timer.stop()
+        self.result_frame.hide()
+        self.error_label.hide()
+        self.progress.hide()
+        self._progress_value = 0.0
+
+        self.input_path = paths[0]
+        fname = os.path.basename(self.input_path)
+        fsize = human_size(os.path.getsize(self.input_path))
+        self.file_info.setText(f"Selected: {fname} ({fsize})")
+        self.file_info.show()
+        self.search_frame.show()
+        self.redact_btn.setEnabled(True)
+        self.search_input.setEnabled(True)
+
+    def _start_redact(self):
+        text = self.search_input.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "No search terms",
+                                "Please enter the text you want to redact.")
+            return
+
+        terms = [t.strip() for t in text.split("\n") if t.strip()]
+
+        # Confirm with user — redaction is permanent
+        reply = QMessageBox.warning(
+            self, "Confirm Redaction",
+            f"This will permanently remove {len(terms)} term(s) from the PDF.\n\n"
+            "The original content cannot be recovered from the redacted file.\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.No:
+            return
+
+        self.result_frame.hide()
+        self.error_label.hide()
+        self.progress.show()
+        self.progress.setValue(0)
+        self._progress_value = 0.0
+        self._progress_timer.start()
+        self.redact_btn.setEnabled(False)
+        self.drop_zone.setEnabled(False)
+
+        self.worker = RedactWorker(self.input_path, terms)
+        self.worker.finished.connect(self._on_finished)
+        self.worker.start()
+
+    def _tick_progress(self):
+        remaining = 90.0 - self._progress_value
+        self._progress_value += remaining * 0.05
+        self.progress.setValue(int(self._progress_value))
+
+    def _on_finished(self, success, output_path, orig_size, new_size, redaction_count):
+        self._progress_timer.stop()
+        self.progress.setValue(100)
+        self.drop_zone.setEnabled(True)
+        self.redact_btn.setEnabled(True)
+        self.progress.hide()
+
+        if not success:
+            self.error_label.setText(
+                "Something went wrong \u2014 please try again or contact your IT team.")
+            self.error_label.show()
+            return
+
+        self.output_tmp_path = output_path
+        self.result_icon.setText("\u2705")
+        if redaction_count > 0:
+            self.result_text.setText(
+                f"Redacted {redaction_count} instance(s) across the document.\n"
+                f"Size: {human_size(new_size)}")
+        else:
+            self.result_text.setText(
+                "No matches found for the search terms.\n"
+                "The document was not modified.")
+        self.name_input.setText(Path(self.input_path).stem + " - Redacted")
+        self.save_btn.setEnabled(True)
+        self.name_input.setEnabled(True)
+        self.result_frame.show()
+
+    def _save(self):
+        name = self.name_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Name needed", "Please type a name for the file.")
+            return
+        if not name.lower().endswith(".pdf"):
+            name += ".pdf"
+
+        dest_dir = os.path.dirname(self.input_path)
+        dest, _ = QFileDialog.getSaveFileName(
+            self, "Save redacted PDF", os.path.join(dest_dir, name),
+            "PDF Files (*.pdf)")
+        if not dest:
+            return
+
+        try:
+            shutil.copy2(self.output_tmp_path, dest)
+            saved_name = os.path.basename(dest)
+            self.result_icon.setText("\u2705")
+            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.save_btn.setEnabled(False)
+            self.name_input.setEnabled(False)
+        except Exception:
+            self.error_label.setText(
+                "Something went wrong while saving \u2014 please try again or contact your IT team.")
+            self.error_label.show()
+
+
+# ---------------------------------------------------------------------------
+# OCR tab
+# ---------------------------------------------------------------------------
+
+class OCRWorker(QThread):
+    finished = pyqtSignal(bool, str, int, int)
+
+    def __init__(self, input_path: str):
+        super().__init__()
+        self.input_path = input_path
+
+    def run(self):
+        orig_size = os.path.getsize(self.input_path)
+        try:
+            from PIL import Image
+            import io
+
+            tmp_dir = tempfile.mkdtemp()
+            output_path = os.path.join(tmp_dir, "ocr_output.pdf")
+
+            doc = fitz.open(self.input_path)
+            out_doc = fitz.open()  # new empty PDF
+
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                # Render page to image
+                pix = page.get_pixmap(dpi=300)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+
+                # Run OCR to get text + bounding boxes
+                pdf_bytes = pytesseract.image_to_pdf_or_hocr(img, extension='pdf')
+
+                # Insert the OCR'd page
+                ocr_page_doc = fitz.open("pdf", pdf_bytes)
+                out_doc.insert_pdf(ocr_page_doc)
+                ocr_page_doc.close()
+
+            out_doc.save(output_path, garbage=4, deflate=True)
+            out_doc.close()
+            doc.close()
+            new_size = os.path.getsize(output_path)
+            self.finished.emit(True, output_path, orig_size, new_size)
+        except Exception:
+            self.finished.emit(False, "", orig_size, 0)
+
+
+class OCRTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.input_path = ""
+        self.output_tmp_path = ""
+        self.worker = None
+
+        # Smooth progress animation
+        self._progress_timer = QTimer()
+        self._progress_timer.setInterval(150)
+        self._progress_timer.timeout.connect(self._tick_progress)
+        self._progress_value = 0.0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        self.drop_zone = DropZone("Drop a scanned PDF here for OCR")
+        self.drop_zone.files_dropped.connect(self._on_file_dropped)
+        layout.addWidget(self.drop_zone)
+
+        info = QLabel("OCR converts scanned documents into searchable,\n"
+                       "selectable text while keeping the original appearance.")
+        info.setFont(QFont("Segoe UI", 11))
+        info.setAlignment(Qt.AlignCenter)
+        info.setStyleSheet("color: #888888;")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        if not HAS_TESSERACT:
+            warn = QLabel(
+                "\u26A0 Tesseract OCR engine was not found.\n"
+                "Please ask your IT team to install it.")
+            warn.setFont(QFont("Segoe UI", 12))
+            warn.setStyleSheet("color: #d32f2f; padding: 12px;")
+            warn.setAlignment(Qt.AlignCenter)
+            warn.setWordWrap(True)
+            layout.addWidget(warn)
+            self.drop_zone.setEnabled(False)
+
+        self.file_info = QLabel("")
+        self.file_info.setFont(QFont("Segoe UI", 12))
+        self.file_info.setAlignment(Qt.AlignCenter)
+        self.file_info.setWordWrap(True)
+        self.file_info.hide()
+        layout.addWidget(self.file_info)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.hide()
+        layout.addWidget(self.progress)
+
+        self.result_frame = QFrame()
+        result_layout = QVBoxLayout(self.result_frame)
+        result_layout.setSpacing(12)
+
+        self.result_icon = QLabel()
+        self.result_icon.setFont(QFont("Segoe UI", 48))
+        self.result_icon.setAlignment(Qt.AlignCenter)
+        result_layout.addWidget(self.result_icon)
+
+        self.result_text = QLabel("")
+        self.result_text.setFont(QFont("Segoe UI", 13))
+        self.result_text.setAlignment(Qt.AlignCenter)
+        self.result_text.setWordWrap(True)
+        result_layout.addWidget(self.result_text)
+
+        save_label = QLabel("What would you like to call this file?")
+        save_label.setFont(QFont("Segoe UI", 13))
+        save_label.setAlignment(Qt.AlignCenter)
+        result_layout.addWidget(save_label)
+
+        name_row = QHBoxLayout()
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Type a name for the file")
+        name_row.addWidget(self.name_input)
+        pdf_label = QLabel(".pdf")
+        pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        pdf_label.setStyleSheet("color: #888;")
+        name_row.addWidget(pdf_label)
+        result_layout.addLayout(name_row)
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setStyleSheet(BTN_SUCCESS)
+        self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.clicked.connect(self._save)
+        result_layout.addWidget(self.save_btn, alignment=Qt.AlignCenter)
+
+        self.result_frame.hide()
+        layout.addWidget(self.result_frame)
+
+        self.error_label = QLabel("")
+        self.error_label.setFont(QFont("Segoe UI", 13))
+        self.error_label.setStyleSheet("color: #d32f2f;")
+        self.error_label.setAlignment(Qt.AlignCenter)
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
+
+        layout.addStretch()
+
+    def _on_file_dropped(self, paths):
+        self._progress_timer.stop()
+        self.result_frame.hide()
+        self.error_label.hide()
+        self.progress.hide()
+        self._progress_value = 0.0
+
+        self.input_path = paths[0]
+        fname = os.path.basename(self.input_path)
+        fsize = human_size(os.path.getsize(self.input_path))
+        self.file_info.setText(f"Selected: {fname} ({fsize})")
+        self.file_info.show()
+
+        self.progress.show()
+        self.progress.setValue(0)
+        self._progress_timer.start()
+        self.drop_zone.setEnabled(False)
+
+        self.worker = OCRWorker(self.input_path)
+        self.worker.finished.connect(self._on_finished)
+        self.worker.start()
+
+    def _tick_progress(self):
+        remaining = 90.0 - self._progress_value
+        self._progress_value += remaining * 0.02  # slower — OCR takes longer
+        self.progress.setValue(int(self._progress_value))
+
+    def _on_finished(self, success, output_path, orig_size, new_size):
+        self._progress_timer.stop()
+        self.progress.setValue(100)
+        self.drop_zone.setEnabled(True)
+        self.progress.hide()
+
+        if not success:
+            self.error_label.setText(
+                "Something went wrong \u2014 please try again or contact your IT team.")
+            self.error_label.show()
+            return
+
+        self.output_tmp_path = output_path
+        self.result_icon.setText("\u2705")
+        self.result_text.setText(
+            f"OCR complete! Text is now searchable and selectable.\n"
+            f"Size: {human_size(new_size)}")
+        self.name_input.setText(Path(self.input_path).stem + " - OCR")
+        self.save_btn.setEnabled(True)
+        self.name_input.setEnabled(True)
+        self.result_frame.show()
+
+    def _save(self):
+        name = self.name_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Name needed", "Please type a name for the file.")
+            return
+        if not name.lower().endswith(".pdf"):
+            name += ".pdf"
+
+        dest_dir = os.path.dirname(self.input_path)
+        dest, _ = QFileDialog.getSaveFileName(
+            self, "Save OCR PDF", os.path.join(dest_dir, name),
+            "PDF Files (*.pdf)")
+        if not dest:
+            return
+
+        try:
+            shutil.copy2(self.output_tmp_path, dest)
+            saved_name = os.path.basename(dest)
+            self.result_icon.setText("\u2705")
+            self.result_text.setText(f"Saved as: {saved_name}\nSize: {human_size(os.path.getsize(dest))}")
+            self.save_btn.setEnabled(False)
+            self.name_input.setEnabled(False)
+        except Exception:
+            self.error_label.setText(
+                "Something went wrong while saving \u2014 please try again or contact your IT team.")
+            self.error_label.show()
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 
@@ -1146,7 +1861,7 @@ class MainWindow(QMainWindow):
         header.setStyleSheet("color: #1976D2; margin-bottom: 4px;")
         main_layout.addWidget(header)
 
-        subtitle = QLabel("Compress, merge, and rename your PDF files \u2014 everything stays on this computer")
+        subtitle = QLabel("Compress, merge, rename, redact, flatten, and OCR your PDF files \u2014 everything stays on this computer")
         subtitle.setFont(QFont("Segoe UI", 11))
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet("color: #888888; margin-bottom: 12px;")
@@ -1157,6 +1872,9 @@ class MainWindow(QMainWindow):
         tabs.addTab(CompressTab(self.gs_exe), "  Compress  ")
         tabs.addTab(MergeTab(self.gs_exe), "  Merge  ")
         tabs.addTab(RenameTab(), "  Rename  ")
+        tabs.addTab(RedactTab(), "  Redact  ")
+        tabs.addTab(FlattenTab(), "  Flatten  ")
+        tabs.addTab(OCRTab(), "  OCR  ")
         main_layout.addWidget(tabs)
 
         if not self.gs_exe:
