@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -289,63 +289,163 @@ class UpdateChecker(QThread):
             pass  # Silent fail — no internet, no problem
 
 
+class UpdateDownloader(QThread):
+    """Downloads the installer in the background."""
+    progress = pyqtSignal(int)  # percentage
+    finished = pyqtSignal(bool, str)  # success, file_path
+
+    def __init__(self, download_url: str):
+        super().__init__()
+        self.download_url = download_url
+
+    def run(self):
+        try:
+            tmp_dir = tempfile.mkdtemp()
+            installer_path = os.path.join(tmp_dir, "Install PDF Tool.exe")
+            req = Request(self.download_url)
+            with urlopen(req, timeout=60) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                chunk_size = 256 * 1024  # 256 KB chunks
+                with open(installer_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            self.progress.emit(int(downloaded * 100 / total))
+            self.progress.emit(100)
+            self.finished.emit(True, installer_path)
+        except Exception:
+            self.finished.emit(False, "")
+
+
 class UpdateDialog(QDialog):
     """Dialog shown when a new version is available."""
     def __init__(self, parent, latest_version, download_url):
         super().__init__(parent)
         self.download_url = download_url
+        self.latest_version = latest_version
+        self.downloader = None
         self.setWindowTitle("Update Available")
-        self.setFixedSize(420, 200)
+        self.setFixedSize(420, 260)
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-        layout.setContentsMargins(24, 24, 24, 24)
+        self._layout = QVBoxLayout(self)
+        self._layout.setSpacing(16)
+        self._layout.setContentsMargins(24, 24, 24, 24)
 
-        title = QLabel("A new version is available!")
-        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
+        self.title = QLabel("A new version is available!")
+        self.title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.title.setAlignment(Qt.AlignCenter)
+        self._layout.addWidget(self.title)
 
-        info = QLabel(
+        self.info = QLabel(
             f"Your version: {APP_VERSION}\n"
             f"Latest version: {latest_version}")
-        info.setFont(QFont("Segoe UI", 11))
-        info.setAlignment(Qt.AlignCenter)
-        layout.addWidget(info)
+        self.info.setFont(QFont("Segoe UI", 11))
+        self.info.setAlignment(Qt.AlignCenter)
+        self._layout.addWidget(self.info)
 
-        btn_row = QHBoxLayout()
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.hide()
+        self._layout.addWidget(self.progress)
 
-        download_btn = QPushButton("Download Update")
-        download_btn.setFont(QFont("Segoe UI", 12))
-        download_btn.setStyleSheet("""
+        self.status_label = QLabel("")
+        self.status_label.setFont(QFont("Segoe UI", 11))
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.hide()
+        self._layout.addWidget(self.status_label)
+
+        self.btn_row = QHBoxLayout()
+
+        self.download_btn = QPushButton("Update Now")
+        self.download_btn.setFont(QFont("Segoe UI", 12))
+        self.download_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50; color: white;
                 border: none; padding: 10px 24px; border-radius: 8px;
             }
             QPushButton:hover { background-color: #43A047; }
         """)
-        download_btn.setCursor(Qt.PointingHandCursor)
-        download_btn.clicked.connect(self._download)
-        btn_row.addWidget(download_btn)
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.clicked.connect(self._start_update)
+        self.btn_row.addWidget(self.download_btn)
 
-        later_btn = QPushButton("Later")
-        later_btn.setFont(QFont("Segoe UI", 12))
-        later_btn.setStyleSheet("""
+        self.later_btn = QPushButton("Later")
+        self.later_btn.setFont(QFont("Segoe UI", 12))
+        self.later_btn.setStyleSheet("""
             QPushButton {
                 background-color: #f5f5f5; color: #333;
                 border: 1px solid #e0e0e0; padding: 10px 24px; border-radius: 8px;
             }
             QPushButton:hover { background-color: #eee; }
         """)
-        later_btn.setCursor(Qt.PointingHandCursor)
-        later_btn.clicked.connect(self.close)
-        btn_row.addWidget(later_btn)
+        self.later_btn.setCursor(Qt.PointingHandCursor)
+        self.later_btn.clicked.connect(self.close)
+        self.btn_row.addWidget(self.later_btn)
 
-        layout.addLayout(btn_row)
+        self._layout.addLayout(self.btn_row)
 
-    def _download(self):
-        webbrowser.open(self.download_url)
-        self.close()
+    def _start_update(self):
+        self.download_btn.setEnabled(False)
+        self.later_btn.setEnabled(False)
+        self.title.setText("Downloading update...")
+        self.info.hide()
+        self.progress.show()
+        self.progress.setValue(0)
+        self.status_label.setText("Downloading installer...")
+        self.status_label.show()
+
+        self.downloader = UpdateDownloader(self.download_url)
+        self.downloader.progress.connect(self.progress.setValue)
+        self.downloader.finished.connect(self._on_download_finished)
+        self.downloader.start()
+
+    def _on_download_finished(self, success, installer_path):
+        if not success:
+            self.title.setText("Update failed")
+            self.status_label.setText("Could not download the update. Please try again later.")
+            self.progress.hide()
+            self.later_btn.setEnabled(True)
+            return
+
+        self.status_label.setText("Installing update and restarting...")
+        self.progress.setValue(100)
+
+        # Find the path to the current app executable
+        if getattr(sys, 'frozen', False):
+            app_exe = sys.executable
+        else:
+            app_exe = os.path.abspath(sys.argv[0])
+
+        # Create a batch script that:
+        # 1. Waits for this app to close
+        # 2. Runs the installer silently
+        # 3. Reopens the app
+        bat_dir = tempfile.mkdtemp()
+        bat_path = os.path.join(bat_dir, "update.bat")
+        with open(bat_path, "w") as f:
+            f.write(f'@echo off\n')
+            f.write(f'ping 127.0.0.1 -n 3 > nul\n')  # wait 2 seconds
+            f.write(f'"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\n')
+            f.write(f'start "" "{app_exe}"\n')
+            f.write(f'del "%~f0"\n')  # delete the batch file
+
+        # Launch the batch script hidden and close the app
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        subprocess.Popen(
+            ["cmd.exe", "/c", bat_path],
+            startupinfo=startupinfo,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+        # Close the app
+        QApplication.instance().quit()
 
 
 # ---------------------------------------------------------------------------
