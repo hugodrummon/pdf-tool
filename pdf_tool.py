@@ -1975,7 +1975,7 @@ class OCRTab(QWidget):
 # Image compress worker + tab
 # ---------------------------------------------------------------------------
 
-IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".bmp", ".tiff", ".tif"]
+IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"]
 
 
 class ImageCompressWorker(QThread):
@@ -1989,11 +1989,6 @@ class ImageCompressWorker(QThread):
     def run(self):
         try:
             from PIL import Image
-            try:
-                from pillow_heif import register_heif_opener
-                register_heif_opener()
-            except ImportError:
-                pass  # HEIC support unavailable — other formats still work
             orig_size = os.path.getsize(self.input_path)
             img = Image.open(self.input_path)
 
