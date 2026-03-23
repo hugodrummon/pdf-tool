@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.4.0"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QProgressBar, QTabWidget,
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox,
     QSizePolicy, QFrame, QSpacerItem, QAbstractItemView, QDialog,
-    QTextEdit
+    QTextEdit, QScrollArea
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QSize, QTimer
 from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QDragEnterEvent, QDropEvent
@@ -660,6 +660,7 @@ class CompressTab(QWidget):
         self.input_path = ""
         self.output_tmp_path = ""
         self.worker = None
+        self._saved_files = []  # list of (display_name, full_path)
 
         # Smooth progress animation
         self._progress_timer = QTimer()
@@ -706,6 +707,7 @@ class CompressTab(QWidget):
         self.size_warning.setFont(QFont("Segoe UI", 12))
         self.size_warning.setAlignment(Qt.AlignCenter)
         self.size_warning.setStyleSheet("color: #e65100; font-weight: bold;")
+        self.size_warning.setWordWrap(True)
         self.size_warning.hide()
         result_layout.addWidget(self.size_warning)
 
@@ -715,8 +717,10 @@ class CompressTab(QWidget):
         result_layout.addWidget(save_label)
 
         name_row = QHBoxLayout()
+        name_row.setSpacing(8)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Type a name for the file")
+        self.name_input.setMinimumHeight(36)
         name_row.addWidget(self.name_input)
         pdf_label = QLabel(".pdf")
         pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
@@ -740,6 +744,27 @@ class CompressTab(QWidget):
         self.error_label.setWordWrap(True)
         self.error_label.hide()
         layout.addWidget(self.error_label)
+
+        # --- History list of completed files ---
+        self.history_label = QLabel("Completed files")
+        self.history_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.history_label.setStyleSheet("color: #555; margin-top: 8px;")
+        self.history_label.hide()
+        layout.addWidget(self.history_label)
+
+        self.history_list = QListWidget()
+        self.history_list.setFont(QFont("Segoe UI", 11))
+        self.history_list.setAlternatingRowColors(True)
+        self.history_list.setStyleSheet(
+            "QListWidget { border: 1px solid #e0e0e0; border-radius: 6px; background: #fafafa; }"
+            "QListWidget::item { padding: 6px 10px; }"
+            "QListWidget::item:selected { background-color: #e3f2fd; color: black; }"
+            "QListWidget::item:hover { background-color: #f0f0f0; }"
+        )
+        self.history_list.setMaximumHeight(140)
+        self.history_list.itemDoubleClicked.connect(self._open_history_item)
+        self.history_list.hide()
+        layout.addWidget(self.history_list)
 
         layout.addStretch()
 
@@ -786,9 +811,13 @@ class CompressTab(QWidget):
         self.worker.start()
 
     def _tick_progress(self):
-        """Smoothly advance progress bar, slowing as it approaches 90%."""
-        remaining = 90.0 - self._progress_value
-        self._progress_value += remaining * 0.03
+        """Smoothly advance progress bar toward 95%."""
+        if self._progress_value < 70:
+            self._progress_value += 1.2
+        elif self._progress_value < 85:
+            self._progress_value += 0.5
+        elif self._progress_value < 95:
+            self._progress_value += 0.15
         self.progress.setValue(int(self._progress_value))
 
     def _on_finished(self, success, output_path, orig_size, new_size):
@@ -839,18 +868,32 @@ class CompressTab(QWidget):
         try:
             shutil.copy2(self.output_tmp_path, dest)
             saved_name = os.path.basename(dest)
-            self.result_icon.setText("\u2705")
-            self.result_text.setText(
-                f'<div style="text-align:center;">'
-                f'<span style="color:#888;">Saved as:</span> <b>{saved_name}</b><br>'
-                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(os.path.getsize(dest))}</b>'
-                f'</div>')
-            self.save_btn.setEnabled(False)
-            self.name_input.setEnabled(False)
+            saved_size = human_size(os.path.getsize(dest))
+
+            # Add to history list
+            self._saved_files.append((saved_name, dest))
+            self.history_list.addItem(f"\u2705  {saved_name}  ({saved_size})")
+            self.history_label.show()
+            self.history_list.show()
+
+            # Reset the working area for the next file
+            self.result_frame.hide()
+            self.file_info.hide()
+            self.size_warning.hide()
+            self.drop_zone.setEnabled(True)
         except Exception:
             self.error_label.setText(
                 "Something went wrong while saving \u2014 please try again or contact your IT team.")
             self.error_label.show()
+
+    def _open_history_item(self, item):
+        """Double-click a completed file to open its folder in Explorer."""
+        idx = self.history_list.row(item)
+        if 0 <= idx < len(self._saved_files):
+            path = self._saved_files[idx][1]
+            if os.path.exists(path):
+                import subprocess
+                subprocess.Popen(f'explorer /select,"{path}"')
 
 
 # ---------------------------------------------------------------------------
@@ -864,6 +907,7 @@ class MergeTab(QWidget):
         self.file_paths = []
         self.output_tmp_path = ""
         self.worker = None
+        self._saved_files = []  # list of (display_name, full_path)
 
         # Smooth progress animation
         self._progress_timer = QTimer()
@@ -950,6 +994,7 @@ class MergeTab(QWidget):
         self.size_warning.setFont(QFont("Segoe UI", 12))
         self.size_warning.setAlignment(Qt.AlignCenter)
         self.size_warning.setStyleSheet("color: #e65100; font-weight: bold;")
+        self.size_warning.setWordWrap(True)
         self.size_warning.hide()
         result_layout.addWidget(self.size_warning)
 
@@ -959,8 +1004,10 @@ class MergeTab(QWidget):
         result_layout.addWidget(save_label)
 
         name_row = QHBoxLayout()
+        name_row.setSpacing(8)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Type a name for the file")
+        self.name_input.setMinimumHeight(36)
         name_row.addWidget(self.name_input)
         pdf_label = QLabel(".pdf")
         pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
@@ -984,6 +1031,27 @@ class MergeTab(QWidget):
         self.error_label.setWordWrap(True)
         self.error_label.hide()
         layout.addWidget(self.error_label)
+
+        # --- History list of completed files ---
+        self.history_label = QLabel("Completed files")
+        self.history_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.history_label.setStyleSheet("color: #555; margin-top: 8px;")
+        self.history_label.hide()
+        layout.addWidget(self.history_label)
+
+        self.history_list = QListWidget()
+        self.history_list.setFont(QFont("Segoe UI", 11))
+        self.history_list.setAlternatingRowColors(True)
+        self.history_list.setStyleSheet(
+            "QListWidget { border: 1px solid #e0e0e0; border-radius: 6px; background: #fafafa; }"
+            "QListWidget::item { padding: 6px 10px; }"
+            "QListWidget::item:selected { background-color: #e3f2fd; color: black; }"
+            "QListWidget::item:hover { background-color: #f0f0f0; }"
+        )
+        self.history_list.setMaximumHeight(140)
+        self.history_list.itemDoubleClicked.connect(self._open_history_item)
+        self.history_list.hide()
+        layout.addWidget(self.history_list)
 
         layout.addStretch()
 
@@ -1055,9 +1123,13 @@ class MergeTab(QWidget):
         self.worker.start()
 
     def _tick_progress(self):
-        """Smoothly advance progress bar, slowing as it approaches 90%."""
-        remaining = 90.0 - self._progress_value
-        self._progress_value += remaining * 0.03
+        """Smoothly advance progress bar toward 95%."""
+        if self._progress_value < 70:
+            self._progress_value += 1.2
+        elif self._progress_value < 85:
+            self._progress_value += 0.5
+        elif self._progress_value < 95:
+            self._progress_value += 0.15
         self.progress.setValue(int(self._progress_value))
 
     def _on_finished(self, success, output_path, combined_size, final_size):
@@ -1110,18 +1182,34 @@ class MergeTab(QWidget):
         try:
             shutil.copy2(self.output_tmp_path, dest)
             saved_name = os.path.basename(dest)
-            self.result_icon.setText("\u2705")
-            self.result_text.setText(
-                f'<div style="text-align:center;">'
-                f'<span style="color:#888;">Saved as:</span> <b>{saved_name}</b><br>'
-                f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{human_size(os.path.getsize(dest))}</b>'
-                f'</div>')
-            self.save_btn.setEnabled(False)
-            self.name_input.setEnabled(False)
+            saved_size = human_size(os.path.getsize(dest))
+
+            # Add to history list
+            self._saved_files.append((saved_name, dest))
+            self.history_list.addItem(f"\u2705  {saved_name}  ({saved_size})")
+            self.history_label.show()
+            self.history_list.show()
+
+            # Reset the working area for the next merge
+            self.result_frame.hide()
+            self.size_warning.hide()
+            self.file_paths.clear()
+            self._refresh_list()
+            self._show_list_controls(False)
+            self.drop_zone.setEnabled(True)
         except Exception:
             self.error_label.setText(
                 "Something went wrong while saving \u2014 please try again or contact your IT team.")
             self.error_label.show()
+
+    def _open_history_item(self, item):
+        """Double-click a completed file to open its folder in Explorer."""
+        idx = self.history_list.row(item)
+        if 0 <= idx < len(self._saved_files):
+            path = self._saved_files[idx][1]
+            if os.path.exists(path):
+                import subprocess
+                subprocess.Popen(f'explorer /select,"{path}"')
 
 
 # ---------------------------------------------------------------------------
@@ -1156,8 +1244,10 @@ class RenameTab(QWidget):
         rename_layout.addWidget(new_label)
 
         name_row = QHBoxLayout()
+        name_row.setSpacing(8)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Type the new name")
+        self.name_input.setMinimumHeight(36)
         name_row.addWidget(self.name_input)
         pdf_label = QLabel(".pdf")
         pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
@@ -1341,8 +1431,10 @@ class FlattenTab(QWidget):
         result_layout.addWidget(save_label)
 
         name_row = QHBoxLayout()
+        name_row.setSpacing(8)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Type a name for the file")
+        self.name_input.setMinimumHeight(36)
         name_row.addWidget(self.name_input)
         pdf_label = QLabel(".pdf")
         pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
@@ -1557,8 +1649,10 @@ class RedactTab(QWidget):
         result_layout.addWidget(save_label)
 
         name_row = QHBoxLayout()
+        name_row.setSpacing(8)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Type a name for the file")
+        self.name_input.setMinimumHeight(36)
         name_row.addWidget(self.name_input)
         pdf_label = QLabel(".pdf")
         pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
@@ -1784,8 +1878,10 @@ class OCRTab(QWidget):
         result_layout.addWidget(save_label)
 
         name_row = QHBoxLayout()
+        name_row.setSpacing(8)
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Type a name for the file")
+        self.name_input.setMinimumHeight(36)
         name_row.addWidget(self.name_input)
         pdf_label = QLabel(".pdf")
         pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
@@ -1917,12 +2013,20 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(subtitle)
 
         tabs = QTabWidget()
-        tabs.addTab(CompressTab(self.gs_exe), "Compress")
-        tabs.addTab(MergeTab(self.gs_exe), "Merge")
-        tabs.addTab(RenameTab(), "Rename")
-        tabs.addTab(RedactTab(), "Redact")
-        tabs.addTab(FlattenTab(), "Flatten")
-        tabs.addTab(OCRTab(), "OCR")
+        for widget, label in [
+            (CompressTab(self.gs_exe), "Compress"),
+            (MergeTab(self.gs_exe), "Merge"),
+            (RenameTab(), "Rename"),
+            (RedactTab(), "Redact"),
+            (FlattenTab(), "Flatten"),
+            (OCRTab(), "OCR"),
+        ]:
+            scroll = QScrollArea()
+            scroll.setWidget(widget)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+            tabs.addTab(scroll, label)
         main_layout.addWidget(tabs)
 
         if not self.gs_exe:
@@ -1973,10 +2077,13 @@ class MainWindow(QMainWindow):
                 bold = font.weight() >= QFont.Bold
                 self._font_map.append((child, size, bold))
 
+    BASE_HEIGHT = 650  # Design height for scale factor = 1.0
+
     def _get_scale(self):
-        width = self.width()
-        scale = width / self.BASE_WIDTH
-        return max(0.65, min(scale, 1.5))
+        w_scale = self.width() / self.BASE_WIDTH
+        h_scale = self.height() / self.BASE_HEIGHT
+        scale = min(w_scale, h_scale)  # use the more constraining axis
+        return max(0.55, min(scale, 1.5))
 
     def _apply_scale(self):
         scale = self._get_scale()
@@ -1987,6 +2094,42 @@ class MainWindow(QMainWindow):
                 widget.setFont(QFont("Segoe UI", new_size, weight))
             except RuntimeError:
                 pass  # widget may have been deleted
+
+        # Scale layout spacing and padding within tabs
+        spacing = max(6, int(12 * scale))
+        tab_margin = max(10, int(24 * scale))
+        for i in range(self._tabs.count()):
+            scroll = self._tabs.widget(i)
+            tab = scroll.widget() if isinstance(scroll, QScrollArea) else scroll
+            if tab and tab.layout():
+                tab.layout().setSpacing(max(6, int(16 * scale)))
+                tab.layout().setContentsMargins(tab_margin, tab_margin, tab_margin, tab_margin)
+            for frame in tab.findChildren(QFrame):
+                if frame.layout():
+                    frame.layout().setSpacing(spacing)
+
+        # Scale QLineEdit padding
+        le_pad_v = max(4, int(8 * scale))
+        le_pad_h = max(6, int(12 * scale))
+        le_font = max(10, int(13 * scale))
+        for i in range(self._tabs.count()):
+            tab = self._tabs.widget(i)
+            for le in tab.findChildren(QLineEdit):
+                try:
+                    le.setStyleSheet(f"""
+                        QLineEdit {{
+                            font-size: {le_font}px;
+                            padding: {le_pad_v}px {le_pad_h}px;
+                            border: 2px solid #e0e0e0;
+                            border-radius: 8px;
+                            background: white;
+                        }}
+                        QLineEdit:focus {{
+                            border-color: #1976D2;
+                        }}
+                    """)
+                except RuntimeError:
+                    pass
 
         # Scale tab bar font via stylesheet
         tab_size = max(10, int(13 * scale))
