@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -131,6 +131,9 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
         "-dNOPAUSE",
         "-dBATCH",
         "-dQUIET",
+        "-dNOGC",
+        "-dBandBufferSpace=500000000",
+        "-sBandListStorage=memory",
         f"-dNumRenderingThreads={num_threads}",
         "-dDetectDuplicateImages=true",
         "-dCompressFonts=true",
@@ -155,7 +158,7 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
-        creationflags = subprocess.CREATE_NO_WINDOW
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.ABOVE_NORMAL_PRIORITY_CLASS
 
     result = subprocess.run(
         args,
@@ -196,9 +199,9 @@ class CompressWorker(QThread):
         tmp_dir = tempfile.mkdtemp()
         output_path = os.path.join(tmp_dir, "compressed.pdf")
 
-        # Pick quality based on file size — skip gentle /ebook for large files
-        # since it's slow and often not aggressive enough anyway
-        if orig_size > 50 * 1024 * 1024:  # > 50 MB: go straight to aggressive
+        # Pick quality: go straight to /screen for files well above target
+        # to avoid running Ghostscript twice (/ebook then /screen fallback)
+        if orig_size > TARGET_SIZE_BYTES * 2:
             quality = "/screen"
         else:
             quality = "/ebook"
@@ -247,8 +250,8 @@ class MergeWorker(QThread):
 
         compressed_path = os.path.join(tmp_dir, "compressed.pdf")
 
-        # Pick quality based on merged size
-        if merged_size > 50 * 1024 * 1024:
+        # Pick quality: go straight to /screen for files well above target
+        if merged_size > TARGET_SIZE_BYTES * 2:
             quality = "/screen"
         else:
             quality = "/ebook"
@@ -825,13 +828,13 @@ class CompressTab(QWidget):
         self.worker.start()
 
     def _tick_progress(self):
-        """Smoothly advance progress bar toward 95%."""
+        """Smoothly advance progress bar — never stops moving."""
         if self._progress_value < 70:
             self._progress_value += 1.2
-        elif self._progress_value < 85:
-            self._progress_value += 0.5
-        elif self._progress_value < 95:
-            self._progress_value += 0.15
+        elif self._progress_value < 90:
+            self._progress_value += 0.4
+        elif self._progress_value < 99:
+            self._progress_value += 0.05
         self.progress.setValue(int(self._progress_value))
 
     def _on_finished(self, success, output_path, orig_size, new_size):
@@ -1137,13 +1140,13 @@ class MergeTab(QWidget):
         self.worker.start()
 
     def _tick_progress(self):
-        """Smoothly advance progress bar toward 95%."""
+        """Smoothly advance progress bar — never stops moving."""
         if self._progress_value < 70:
             self._progress_value += 1.2
-        elif self._progress_value < 85:
-            self._progress_value += 0.5
-        elif self._progress_value < 95:
-            self._progress_value += 0.15
+        elif self._progress_value < 90:
+            self._progress_value += 0.4
+        elif self._progress_value < 99:
+            self._progress_value += 0.05
         self.progress.setValue(int(self._progress_value))
 
     def _on_finished(self, success, output_path, combined_size, final_size):
