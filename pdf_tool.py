@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -646,11 +646,15 @@ BTN_SECONDARY = """
 # ---------------------------------------------------------------------------
 
 class CompressTab(QWidget):
+    ALL_EXTENSIONS = [".pdf"] + IMAGE_EXTENSIONS
+
     def __init__(self, gs_exe: str):
         super().__init__()
         self.gs_exe = gs_exe
         self.input_path = ""
         self.output_tmp_path = ""
+        self.output_ext = ".pdf"  # tracks output file extension
+        self._is_image = False
         self.worker = None
         self._saved_files = []  # list of (display_name, full_path)
 
@@ -664,7 +668,10 @@ class CompressTab(QWidget):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        self.drop_zone = DropZone("Drop your PDF here to compress it")
+        self.drop_zone = DropZone(
+            "Drop your file here to compress it\n(PDF, JPEG, PNG, WebP, BMP, TIFF)",
+            file_extensions=self.ALL_EXTENSIONS,
+            file_filter_name="PDF / Image")
         self.drop_zone.files_dropped.connect(self._on_file_dropped)
         layout.addWidget(self.drop_zone)
 
@@ -674,6 +681,35 @@ class CompressTab(QWidget):
         self.file_info.setWordWrap(True)
         self.file_info.hide()
         layout.addWidget(self.file_info)
+
+        # Quality slider (only shown for images)
+        self.quality_frame = QFrame()
+        q_layout = QHBoxLayout(self.quality_frame)
+        q_layout.setContentsMargins(0, 0, 0, 0)
+        q_label = QLabel("Quality:")
+        q_label.setFont(QFont("Segoe UI", 12))
+        q_layout.addWidget(q_label)
+        self.quality_slider = QSlider(Qt.Horizontal)
+        self.quality_slider.setRange(20, 95)
+        self.quality_slider.setValue(75)
+        self.quality_slider.setTickPosition(QSlider.TicksBelow)
+        self.quality_slider.setTickInterval(15)
+        q_layout.addWidget(self.quality_slider)
+        self.quality_val = QLabel("75%")
+        self.quality_val.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.quality_val.setMinimumWidth(40)
+        q_layout.addWidget(self.quality_val)
+        self.quality_slider.valueChanged.connect(
+            lambda v: self.quality_val.setText(f"{v}%"))
+        self.quality_frame.hide()
+        layout.addWidget(self.quality_frame)
+
+        self.compress_img_btn = QPushButton("Compress")
+        self.compress_img_btn.setStyleSheet(BTN_PRIMARY)
+        self.compress_img_btn.setCursor(Qt.PointingHandCursor)
+        self.compress_img_btn.clicked.connect(self._start_image_compress)
+        self.compress_img_btn.hide()
+        layout.addWidget(self.compress_img_btn, alignment=Qt.AlignCenter)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -714,10 +750,10 @@ class CompressTab(QWidget):
         self.name_input.setPlaceholderText("Type a name for the file")
         self.name_input.setMinimumHeight(36)
         name_row.addWidget(self.name_input)
-        pdf_label = QLabel(".pdf")
-        pdf_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        pdf_label.setStyleSheet("color: #888;")
-        name_row.addWidget(pdf_label)
+        self.ext_label = QLabel(".pdf")
+        self.ext_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.ext_label.setStyleSheet("color: #888;")
+        name_row.addWidget(self.ext_label)
         result_layout.addLayout(name_row)
 
         self.save_btn = QPushButton("Save")
@@ -760,6 +796,9 @@ class CompressTab(QWidget):
 
         layout.addStretch()
 
+    def _is_image_file(self, path):
+        return any(path.lower().endswith(e) for e in IMAGE_EXTENSIONS)
+
     def _reset(self):
         self._progress_timer.stop()
         self.result_frame.hide()
@@ -768,26 +807,37 @@ class CompressTab(QWidget):
         self.progress.setValue(0)
         self._progress_value = 0.0
         self.size_warning.hide()
+        self.quality_frame.hide()
+        self.compress_img_btn.hide()
         self.save_btn.setEnabled(True)
         self.name_input.setEnabled(True)
 
     def _on_file_dropped(self, paths):
         self._reset()
         self.input_path = paths[0]
+        self._is_image = self._is_image_file(self.input_path)
         fname = os.path.basename(self.input_path)
         fsize = human_size(os.path.getsize(self.input_path))
         self.file_info.setText(f"Selected: {fname} ({fsize})")
         self.file_info.show()
 
+        if self._is_image:
+            # Show quality slider and compress button for images
+            self.quality_frame.show()
+            self.compress_img_btn.show()
+            return
+
+        # --- PDF flow ---
         if os.path.getsize(self.input_path) <= TARGET_SIZE_BYTES:
+            self.output_ext = ".pdf"
+            self.ext_label.setText(".pdf")
             self.result_icon.setText("\u2705")
             self.result_text.setText(
                 f'<div style="text-align:center;">'
                 f'This file is already under {TARGET_SIZE_MB} MB!<br>'
                 f'<span style="color:#888;">Size:</span> <b style="color:#4CAF50;">{fsize}</b>'
                 f'</div>')
-            stem = Path(self.input_path).stem
-            self.name_input.setText(stem)
+            self.name_input.setText(Path(self.input_path).stem)
             self.output_tmp_path = self.input_path
             self.result_frame.show()
             return
@@ -799,7 +849,22 @@ class CompressTab(QWidget):
         self.drop_zone.setEnabled(False)
 
         self.worker = CompressWorker(self.input_path, self.gs_exe)
-        self.worker.finished.connect(self._on_finished)
+        self.worker.finished.connect(self._on_pdf_finished)
+        self.worker.start()
+
+    def _start_image_compress(self):
+        if not self.input_path:
+            return
+        self.quality_frame.hide()
+        self.compress_img_btn.hide()
+        self.progress.show()
+        self.progress.setValue(0)
+        self._progress_value = 0.0
+        self._progress_timer.start()
+        self.drop_zone.setEnabled(False)
+
+        self.worker = ImageCompressWorker(self.input_path, self.quality_slider.value())
+        self.worker.finished.connect(self._on_image_finished)
         self.worker.start()
 
     def _tick_progress(self):
@@ -812,7 +877,7 @@ class CompressTab(QWidget):
             self._progress_value += 0.05
         self.progress.setValue(int(self._progress_value))
 
-    def _on_finished(self, success, output_path, orig_size, new_size):
+    def _on_pdf_finished(self, success, output_path, orig_size, new_size):
         self._progress_timer.stop()
         self.progress.setValue(100)
         self.drop_zone.setEnabled(True)
@@ -825,6 +890,8 @@ class CompressTab(QWidget):
             return
 
         self.output_tmp_path = output_path
+        self.output_ext = ".pdf"
+        self.ext_label.setText(".pdf")
         self.result_icon.setText("\u2705")
         self.result_text.setText(
             f'<div style="text-align:center;">'
@@ -841,19 +908,58 @@ class CompressTab(QWidget):
         self.name_input.setText(Path(self.input_path).stem + " - Compressed")
         self.result_frame.show()
 
+    def _on_image_finished(self, success, output_path, orig_size, new_size, fmt):
+        self._progress_timer.stop()
+        self.progress.setValue(100)
+        self.drop_zone.setEnabled(True)
+        self.progress.hide()
+
+        if not success:
+            self.error_label.setText(
+                "Something went wrong \u2014 please try again or contact your IT team.")
+            self.error_label.show()
+            self.quality_frame.show()
+            self.compress_img_btn.show()
+            return
+
+        self.output_tmp_path = output_path
+        self.output_ext = ".png" if fmt == "PNG" else ".jpg"
+        self.ext_label.setText(self.output_ext)
+        reduction = 0 if orig_size == 0 else int((1 - new_size / orig_size) * 100)
+        self.result_icon.setText("\u2705")
+        self.result_text.setText(
+            f'<div style="text-align:center;">'
+            f'<span style="color:#888;">Original:</span> <b>{human_size(orig_size)}</b><br>'
+            f'<span style="color:#888;">Compressed:</span> <b style="color:#4CAF50;">'
+            f'{human_size(new_size)}</b>  '
+            f'<span style="color:#888;">({reduction}% smaller)</span>'
+            f'</div>')
+
+        self.name_input.setText(Path(self.input_path).stem + " - Compressed")
+        self.result_frame.show()
+
     def _save(self):
         name = self.name_input.text().strip()
         if not name:
             QMessageBox.warning(self, "Name needed", "Please type a name for the file.")
             return
-        if not name.lower().endswith(".pdf"):
-            name += ".pdf"
+        if not name.lower().endswith(self.output_ext):
+            name += self.output_ext
 
-        # Open a Save As dialog so the user picks where to save
         dest_dir = os.path.dirname(self.input_path)
+        ext = self.output_ext
+        if ext == ".pdf":
+            file_filter = "PDF Files (*.pdf)"
+            title = "Save compressed PDF"
+        elif ext == ".png":
+            file_filter = "PNG Files (*.png)"
+            title = "Save compressed image"
+        else:
+            file_filter = "JPEG Files (*.jpg *.jpeg)"
+            title = "Save compressed image"
+
         dest, _ = QFileDialog.getSaveFileName(
-            self, "Save compressed PDF", os.path.join(dest_dir, name),
-            "PDF Files (*.pdf)")
+            self, title, os.path.join(dest_dir, name), file_filter)
         if not dest:
             return
 
@@ -2034,266 +2140,6 @@ class ImageCompressWorker(QThread):
             self.finished.emit(False, "", 0, 0, "")
 
 
-class CompressImageTab(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.input_path = ""
-        self.output_tmp_path = ""
-        self.output_format = ""
-        self.worker = None
-        self._saved_files = []
-
-        self._progress_timer = QTimer()
-        self._progress_timer.setInterval(150)
-        self._progress_timer.timeout.connect(self._tick_progress)
-        self._progress_value = 0.0
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        self.drop_zone = DropZone(
-            "Drop your image here to compress it",
-            file_extensions=IMAGE_EXTENSIONS,
-            file_filter_name="Image")
-        self.drop_zone.files_dropped.connect(self._on_file_dropped)
-        layout.addWidget(self.drop_zone)
-
-        self.file_info = QLabel("")
-        self.file_info.setFont(QFont("Segoe UI", 12))
-        self.file_info.setAlignment(Qt.AlignCenter)
-        self.file_info.setWordWrap(True)
-        self.file_info.hide()
-        layout.addWidget(self.file_info)
-
-        # Quality slider
-        self.quality_frame = QFrame()
-        q_layout = QHBoxLayout(self.quality_frame)
-        q_layout.setContentsMargins(0, 0, 0, 0)
-        q_label = QLabel("Quality:")
-        q_label.setFont(QFont("Segoe UI", 12))
-        q_layout.addWidget(q_label)
-
-        self.quality_slider = QSlider(Qt.Horizontal)
-        self.quality_slider.setRange(20, 95)
-        self.quality_slider.setValue(75)
-        self.quality_slider.setTickPosition(QSlider.TicksBelow)
-        self.quality_slider.setTickInterval(15)
-        q_layout.addWidget(self.quality_slider)
-
-        self.quality_val = QLabel("75%")
-        self.quality_val.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.quality_val.setMinimumWidth(40)
-        q_layout.addWidget(self.quality_val)
-
-        self.quality_slider.valueChanged.connect(
-            lambda v: self.quality_val.setText(f"{v}%"))
-        self.quality_frame.hide()
-        layout.addWidget(self.quality_frame)
-
-        self.compress_btn = QPushButton("Compress")
-        self.compress_btn.setStyleSheet(BTN_PRIMARY)
-        self.compress_btn.setCursor(Qt.PointingHandCursor)
-        self.compress_btn.clicked.connect(self._start_compress)
-        self.compress_btn.hide()
-        layout.addWidget(self.compress_btn, alignment=Qt.AlignCenter)
-
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.hide()
-        layout.addWidget(self.progress)
-
-        self.result_frame = QFrame()
-        result_layout = QVBoxLayout(self.result_frame)
-        result_layout.setSpacing(12)
-
-        self.result_icon = QLabel()
-        self.result_icon.setFont(QFont("Segoe UI", 48))
-        self.result_icon.setAlignment(Qt.AlignCenter)
-        result_layout.addWidget(self.result_icon)
-
-        self.result_text = QLabel("")
-        self.result_text.setFont(QFont("Segoe UI", 13))
-        self.result_text.setAlignment(Qt.AlignCenter)
-        self.result_text.setWordWrap(True)
-        result_layout.addWidget(self.result_text)
-
-        save_label = QLabel("What would you like to call this file?")
-        save_label.setFont(QFont("Segoe UI", 13))
-        save_label.setAlignment(Qt.AlignCenter)
-        result_layout.addWidget(save_label)
-
-        name_row = QHBoxLayout()
-        name_row.setSpacing(8)
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Type a name for the file")
-        self.name_input.setMinimumHeight(36)
-        name_row.addWidget(self.name_input)
-        self.ext_label = QLabel(".jpg")
-        self.ext_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.ext_label.setStyleSheet("color: #888;")
-        name_row.addWidget(self.ext_label)
-        result_layout.addLayout(name_row)
-
-        self.save_btn = QPushButton("Save")
-        self.save_btn.setStyleSheet(BTN_SUCCESS)
-        self.save_btn.setCursor(Qt.PointingHandCursor)
-        self.save_btn.clicked.connect(self._save)
-        result_layout.addWidget(self.save_btn, alignment=Qt.AlignCenter)
-
-        self.result_frame.hide()
-        layout.addWidget(self.result_frame)
-
-        self.error_label = QLabel("")
-        self.error_label.setFont(QFont("Segoe UI", 13))
-        self.error_label.setStyleSheet("color: #d32f2f;")
-        self.error_label.setAlignment(Qt.AlignCenter)
-        self.error_label.setWordWrap(True)
-        self.error_label.hide()
-        layout.addWidget(self.error_label)
-
-        # History list
-        self.history_label = QLabel("Completed files")
-        self.history_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.history_label.setStyleSheet("color: #555; margin-top: 8px;")
-        self.history_label.hide()
-        layout.addWidget(self.history_label)
-
-        self.history_list = QListWidget()
-        self.history_list.setFont(QFont("Segoe UI", 11))
-        self.history_list.setAlternatingRowColors(True)
-        self.history_list.setStyleSheet(
-            "QListWidget { border: 1px solid #e0e0e0; border-radius: 6px; background: #fafafa; }"
-            "QListWidget::item { padding: 6px 10px; }"
-            "QListWidget::item:selected { background-color: #e3f2fd; color: black; }"
-            "QListWidget::item:hover { background-color: #f0f0f0; }"
-        )
-        self.history_list.setMaximumHeight(140)
-        self.history_list.itemDoubleClicked.connect(self._open_history_item)
-        self.history_list.hide()
-        layout.addWidget(self.history_list)
-
-        layout.addStretch()
-
-    def _reset(self):
-        self._progress_timer.stop()
-        self.result_frame.hide()
-        self.error_label.hide()
-        self.progress.hide()
-        self.progress.setValue(0)
-        self._progress_value = 0.0
-        self.save_btn.setEnabled(True)
-        self.name_input.setEnabled(True)
-
-    def _on_file_dropped(self, paths):
-        self._reset()
-        self.input_path = paths[0]
-        fname = os.path.basename(self.input_path)
-        fsize = human_size(os.path.getsize(self.input_path))
-        self.file_info.setText(f"Selected: {fname} ({fsize})")
-        self.file_info.show()
-        self.quality_frame.show()
-        self.compress_btn.show()
-
-    def _start_compress(self):
-        if not self.input_path:
-            return
-        self._reset()
-        self.quality_frame.hide()
-        self.compress_btn.hide()
-        self.progress.show()
-        self.progress.setValue(0)
-        self._progress_value = 0.0
-        self._progress_timer.start()
-        self.drop_zone.setEnabled(False)
-
-        self.worker = ImageCompressWorker(self.input_path, self.quality_slider.value())
-        self.worker.finished.connect(self._on_finished)
-        self.worker.start()
-
-    def _tick_progress(self):
-        if self._progress_value < 70:
-            self._progress_value += 2.0
-        elif self._progress_value < 90:
-            self._progress_value += 0.8
-        elif self._progress_value < 99:
-            self._progress_value += 0.1
-        self.progress.setValue(int(self._progress_value))
-
-    def _on_finished(self, success, output_path, orig_size, new_size, fmt):
-        self._progress_timer.stop()
-        self.progress.setValue(100)
-        self.drop_zone.setEnabled(True)
-        self.progress.hide()
-
-        if not success:
-            self.error_label.setText(
-                "Something went wrong \u2014 please try again or contact your IT team.")
-            self.error_label.show()
-            self.quality_frame.show()
-            self.compress_btn.show()
-            return
-
-        self.output_tmp_path = output_path
-        self.output_format = fmt
-        reduction = 0 if orig_size == 0 else int((1 - new_size / orig_size) * 100)
-        self.result_icon.setText("\u2705")
-        self.result_text.setText(
-            f'<div style="text-align:center;">'
-            f'<span style="color:#888;">Original:</span> <b>{human_size(orig_size)}</b><br>'
-            f'<span style="color:#888;">Compressed:</span> <b style="color:#4CAF50;">'
-            f'{human_size(new_size)}</b>  '
-            f'<span style="color:#888;">({reduction}% smaller)</span>'
-            f'</div>')
-
-        ext = ".png" if fmt == "PNG" else ".jpg"
-        self.ext_label.setText(ext)
-        self.name_input.setText(Path(self.input_path).stem + " - Compressed")
-        self.result_frame.show()
-
-    def _save(self):
-        name = self.name_input.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Name needed", "Please type a name for the file.")
-            return
-        ext = ".png" if self.output_format == "PNG" else ".jpg"
-        if not name.lower().endswith(ext):
-            name += ext
-
-        dest_dir = os.path.dirname(self.input_path)
-        file_filter = f"{'PNG' if self.output_format == 'PNG' else 'JPEG'} Files (*{ext})"
-        dest, _ = QFileDialog.getSaveFileName(
-            self, "Save compressed image", os.path.join(dest_dir, name), file_filter)
-        if not dest:
-            return
-
-        try:
-            shutil.copy2(self.output_tmp_path, dest)
-            saved_name = os.path.basename(dest)
-            saved_size = human_size(os.path.getsize(dest))
-
-            self._saved_files.append((saved_name, dest))
-            self.history_list.addItem(f"\u2705  {saved_name}  ({saved_size})")
-            self.history_label.show()
-            self.history_list.show()
-
-            self.result_frame.hide()
-            self.file_info.hide()
-            self.drop_zone.setEnabled(True)
-        except Exception:
-            self.error_label.setText(
-                "Something went wrong while saving \u2014 please try again or contact your IT team.")
-            self.error_label.show()
-
-    def _open_history_item(self, item):
-        idx = self.history_list.row(item)
-        if 0 <= idx < len(self._saved_files):
-            path = self._saved_files[idx][1]
-            if os.path.exists(path):
-                import subprocess
-                subprocess.Popen(f'explorer /select,"{path}"')
-
-
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
@@ -2335,7 +2181,6 @@ class MainWindow(QMainWindow):
             (RedactTab(), "Redact"),
             (FlattenTab(), "Flatten"),
             (OCRTab(), "OCR"),
-            (CompressImageTab(), "Images"),
         ]:
             scroll = QScrollArea()
             scroll.setWidget(widget)
