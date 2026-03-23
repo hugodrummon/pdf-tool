@@ -28,11 +28,4 @@ Name: "{group}\User Guide"; Filename: "{app}\User Guide - PDF Tool.txt"
 Name: "{group}\Uninstall PDF Tool"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{app}\PDF Tool.exe"; Description: "Open PDF Tool now"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\PDF Tool.exe"; Flags: nowait skipifdontexist runasoriginaluser; Check: IsSilentMode
-
-[Code]
-function IsSilentMode: Boolean;
-begin
-  Result := WizardSilent;
-end;
+Filename: "{app}\PDF Tool.exe"; Description: "Open PDF Tool now"; Flags: nowait postinstall
