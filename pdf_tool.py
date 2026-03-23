@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -405,8 +405,9 @@ class UpdateBanner(QFrame):
             app_dir = os.path.dirname(app_exe)
 
         # Create a batch script that:
-        # 1. Waits for this app to close
-        # 2. Runs the installer silently (installer reopens the app)
+        # 1. Waits for this app to fully close
+        # 2. Runs the installer silently
+        # 3. Waits for installer to finish, then relaunches
         bat_dir = tempfile.mkdtemp()
         bat_path = os.path.join(bat_dir, "update.bat")
         with open(bat_path, "w") as f:
@@ -416,8 +417,10 @@ class UpdateBanner(QFrame):
             f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
             f.write(f'  goto waitloop\n')
             f.write(f')\n')
-            f.write(f'ping 127.0.0.1 -n 4 > nul\n')
-            f.write(f'"{self.installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /DIR="{app_dir}"\n')
+            f.write(f'ping 127.0.0.1 -n 5 > nul\n')
+            f.write(f'"{self.installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\n')
+            f.write(f'ping 127.0.0.1 -n 6 > nul\n')
+            f.write(f'start "" "{app_exe}"\n')
             f.write(f'del "%~f0"\n')
 
         startupinfo = subprocess.STARTUPINFO()

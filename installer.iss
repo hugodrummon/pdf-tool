@@ -28,4 +28,4 @@ Name: "{group}\User Guide"; Filename: "{app}\User Guide - PDF Tool.txt"
 Name: "{group}\Uninstall PDF Tool"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{app}\PDF Tool.exe"; Description: "Open PDF Tool now"; Flags: nowait postinstall
+Filename: "{app}\PDF Tool.exe"; Description: "Open PDF Tool now"; Flags: nowait postinstall skipifsilent
