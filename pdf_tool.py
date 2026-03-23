@@ -6,9 +6,10 @@ No internet, no cloud, no third-party services. Everything stays on this machine
 
 APP_VERSION = "1.5.3"
 GITHUB_REPO = "hugodrummon/pdf-tool"
-ENABLED_TABS = ["Compress", "Merge"]  # tabs to show in this build
-
 import sys
+
+# Built exe: only ship these tabs. Running from source: show all tabs for development.
+ENABLED_TABS = ["Compress", "Merge"] if getattr(sys, 'frozen', False) else None
 import os
 import subprocess
 import shutil
@@ -2187,7 +2188,7 @@ class MainWindow(QMainWindow):
             (OCRTab(), "OCR"),
         ]
         for widget, label in all_tabs:
-            if label not in ENABLED_TABS:
+            if ENABLED_TABS is not None and label not in ENABLED_TABS:
                 continue
             scroll = QScrollArea()
             scroll.setWidget(widget)
