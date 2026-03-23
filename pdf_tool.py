@@ -6,6 +6,7 @@ No internet, no cloud, no third-party services. Everything stays on this machine
 
 APP_VERSION = "1.5.3"
 GITHUB_REPO = "hugodrummon/pdf-tool"
+ENABLED_TABS = ["Compress", "Merge"]  # tabs to show in this build
 
 import sys
 import os
@@ -2177,14 +2178,17 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(subtitle)
 
         tabs = QTabWidget()
-        for widget, label in [
+        all_tabs = [
             (CompressTab(self.gs_exe), "Compress"),
             (MergeTab(self.gs_exe), "Merge"),
             (RenameTab(), "Rename"),
             (RedactTab(), "Redact"),
             (FlattenTab(), "Flatten"),
             (OCRTab(), "OCR"),
-        ]:
+        ]
+        for widget, label in all_tabs:
+            if label not in ENABLED_TABS:
+                continue
             scroll = QScrollArea()
             scroll.setWidget(widget)
             scroll.setWidgetResizable(True)
