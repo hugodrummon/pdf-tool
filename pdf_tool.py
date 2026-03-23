@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -413,11 +413,13 @@ class UpdateDialog(QDialog):
         self.status_label.setText("Installing update and restarting...")
         self.progress.setValue(100)
 
-        # Find the path to the current app executable
+        # Find the path to the current app executable and its install dir
         if getattr(sys, 'frozen', False):
             app_exe = sys.executable
+            app_dir = os.path.dirname(app_exe)
         else:
             app_exe = os.path.abspath(sys.argv[0])
+            app_dir = os.path.dirname(app_exe)
 
         # Create a batch script that:
         # 1. Waits for this app to close
@@ -427,8 +429,22 @@ class UpdateDialog(QDialog):
         bat_path = os.path.join(bat_dir, "update.bat")
         with open(bat_path, "w") as f:
             f.write(f'@echo off\n')
-            f.write(f'ping 127.0.0.1 -n 3 > nul\n')  # wait 2 seconds
-            f.write(f'"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\n')
+            # Wait for the app to fully close before installing
+            f.write(f':waitloop\n')
+            f.write(f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find /I "python" >nul && (\n')
+            f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
+            f.write(f'  goto waitloop\n')
+            f.write(f')\n')
+            f.write(f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find /I "PDF Tool" >nul && (\n')
+            f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
+            f.write(f'  goto waitloop\n')
+            f.write(f')\n')
+            f.write(f'ping 127.0.0.1 -n 3 > nul\n')  # extra grace period
+            f.write(f'"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /DIR="{app_dir}"\n')
+            f.write(f'if errorlevel 1 (\n')
+            f.write(f'  ping 127.0.0.1 -n 4 > nul\n')
+            f.write(f'  "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\n')
+            f.write(f')\n')
             f.write(f'start "" "{app_exe}"\n')
             f.write(f'del "%~f0"\n')  # delete the batch file
 
