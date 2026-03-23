@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -423,29 +423,19 @@ class UpdateDialog(QDialog):
 
         # Create a batch script that:
         # 1. Waits for this app to close
-        # 2. Runs the installer silently
-        # 3. Reopens the app
+        # 2. Runs the installer silently (installer reopens the app)
         bat_dir = tempfile.mkdtemp()
         bat_path = os.path.join(bat_dir, "update.bat")
         with open(bat_path, "w") as f:
             f.write(f'@echo off\n')
             # Wait for the app to fully close before installing
             f.write(f':waitloop\n')
-            f.write(f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find /I "python" >nul && (\n')
+            f.write(f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find /I "PDF" >nul && (\n')
             f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
             f.write(f'  goto waitloop\n')
             f.write(f')\n')
-            f.write(f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find /I "PDF Tool" >nul && (\n')
-            f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
-            f.write(f'  goto waitloop\n')
-            f.write(f')\n')
-            f.write(f'ping 127.0.0.1 -n 3 > nul\n')  # extra grace period
+            f.write(f'ping 127.0.0.1 -n 4 > nul\n')  # extra grace period
             f.write(f'"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /DIR="{app_dir}"\n')
-            f.write(f'if errorlevel 1 (\n')
-            f.write(f'  ping 127.0.0.1 -n 4 > nul\n')
-            f.write(f'  "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\n')
-            f.write(f')\n')
-            f.write(f'start "" "{app_exe}"\n')
             f.write(f'del "%~f0"\n')  # delete the batch file
 
         # Launch the batch script hidden and close the app
