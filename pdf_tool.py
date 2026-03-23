@@ -648,6 +648,8 @@ BTN_SECONDARY = """
 # Compress tab
 # ---------------------------------------------------------------------------
 
+IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"]
+
 class CompressTab(QWidget):
     ALL_EXTENSIONS = [".pdf"] + IMAGE_EXTENSIONS
 
@@ -2083,8 +2085,6 @@ class OCRTab(QWidget):
 # ---------------------------------------------------------------------------
 # Image compress worker + tab
 # ---------------------------------------------------------------------------
-
-IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"]
 
 
 class ImageCompressWorker(QThread):
