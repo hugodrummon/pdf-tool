@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.3"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -135,8 +135,16 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
         "-dDetectDuplicateImages=true",
         "-dCompressFonts=true",
         "-dSubsetFonts=true",
-        "-dColorImageDownsampleType=/Bicubic",
-        "-dGrayImageDownsampleType=/Bicubic",
+        "-dColorImageDownsampleType=/Average",
+        "-dGrayImageDownsampleType=/Average",
+        "-dMonoImageDownsampleType=/Subsample",
+        "-dPassThroughJPEGImages=true",
+        "-dFastWebView=false",
+        "-dColorConversionStrategy=/LeaveColorUnchanged",
+        "-dAutoFilterColorImages=false",
+        "-dAutoFilterGrayImages=false",
+        "-dColorImageFilter=/DCTEncode",
+        "-dGrayImageFilter=/DCTEncode",
         f"-sOutputFile={output_path}",
         input_path,
     ]
