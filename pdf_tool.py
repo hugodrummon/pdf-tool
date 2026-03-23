@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.4.4"
+APP_VERSION = "1.4.5"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 
 import sys
@@ -331,83 +331,49 @@ class UpdateDownloader(QThread):
             self.finished.emit(False, "")
 
 
-class UpdateDialog(QDialog):
-    """Dialog shown when a new version is available."""
+class UpdateBanner(QFrame):
+    """In-app banner: auto-downloads update, shows 'Restart to update' button."""
+
     def __init__(self, parent, latest_version, download_url):
         super().__init__(parent)
         self.download_url = download_url
         self.latest_version = latest_version
+        self.installer_path = ""
         self.downloader = None
-        self.setWindowTitle("Update Available")
-        self.setFixedSize(420, 260)
 
-        self._layout = QVBoxLayout(self)
-        self._layout.setSpacing(16)
-        self._layout.setContentsMargins(24, 24, 24, 24)
+        self.setStyleSheet(
+            "UpdateBanner { background-color: #e3f2fd; border: 1px solid #90caf9; "
+            "border-radius: 8px; }")
+        banner_layout = QHBoxLayout(self)
+        banner_layout.setContentsMargins(16, 8, 16, 8)
+        banner_layout.setSpacing(12)
 
-        self.title = QLabel("A new version is available!")
-        self.title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.title.setAlignment(Qt.AlignCenter)
-        self._layout.addWidget(self.title)
-
-        self.info = QLabel(
-            f"Your version: {APP_VERSION}\n"
-            f"Latest version: {latest_version}")
-        self.info.setFont(QFont("Segoe UI", 11))
-        self.info.setAlignment(Qt.AlignCenter)
-        self._layout.addWidget(self.info)
+        self.status_label = QLabel("Downloading update...")
+        self.status_label.setFont(QFont("Segoe UI", 11))
+        self.status_label.setStyleSheet("color: #1565C0; border: none; background: transparent;")
+        banner_layout.addWidget(self.status_label)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
-        self.progress.hide()
-        self._layout.addWidget(self.progress)
+        self.progress.setMaximumWidth(150)
+        self.progress.setMaximumHeight(14)
+        banner_layout.addWidget(self.progress)
 
-        self.status_label = QLabel("")
-        self.status_label.setFont(QFont("Segoe UI", 11))
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.hide()
-        self._layout.addWidget(self.status_label)
+        self.restart_btn = QPushButton("Restart to update")
+        self.restart_btn.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.restart_btn.setStyleSheet(
+            "QPushButton { background-color: #4CAF50; color: white; border: none; "
+            "padding: 6px 16px; border-radius: 6px; }"
+            "QPushButton:hover { background-color: #43A047; }")
+        self.restart_btn.setCursor(Qt.PointingHandCursor)
+        self.restart_btn.clicked.connect(self._do_restart_update)
+        self.restart_btn.hide()
+        banner_layout.addWidget(self.restart_btn)
 
-        self.btn_row = QHBoxLayout()
+        # Start downloading immediately
+        self._start_download()
 
-        self.download_btn = QPushButton("Update Now")
-        self.download_btn.setFont(QFont("Segoe UI", 12))
-        self.download_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50; color: white;
-                border: none; padding: 10px 24px; border-radius: 8px;
-            }
-            QPushButton:hover { background-color: #43A047; }
-        """)
-        self.download_btn.setCursor(Qt.PointingHandCursor)
-        self.download_btn.clicked.connect(self._start_update)
-        self.btn_row.addWidget(self.download_btn)
-
-        self.later_btn = QPushButton("Later")
-        self.later_btn.setFont(QFont("Segoe UI", 12))
-        self.later_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f5f5f5; color: #333;
-                border: 1px solid #e0e0e0; padding: 10px 24px; border-radius: 8px;
-            }
-            QPushButton:hover { background-color: #eee; }
-        """)
-        self.later_btn.setCursor(Qt.PointingHandCursor)
-        self.later_btn.clicked.connect(self.close)
-        self.btn_row.addWidget(self.later_btn)
-
-        self._layout.addLayout(self.btn_row)
-
-    def _start_update(self):
-        self.download_btn.setEnabled(False)
-        self.later_btn.setEnabled(False)
-        self.title.setText("Downloading update...")
-        self.info.hide()
-        self.progress.show()
-        self.progress.setValue(0)
-        self.status_label.setText("Downloading installer...")
-        self.status_label.show()
-
+    def _start_download(self):
         self.downloader = UpdateDownloader(self.download_url)
         self.downloader.progress.connect(self.progress.setValue)
         self.downloader.finished.connect(self._on_download_finished)
@@ -415,14 +381,20 @@ class UpdateDialog(QDialog):
 
     def _on_download_finished(self, success, installer_path):
         if not success:
-            self.title.setText("Update failed")
-            self.status_label.setText("Could not download the update. Please try again later.")
+            self.status_label.setText("Update download failed — will retry next launch")
+            self.status_label.setStyleSheet(
+                "color: #c62828; border: none; background: transparent;")
             self.progress.hide()
-            self.later_btn.setEnabled(True)
             return
 
-        self.status_label.setText("Installing update and restarting...")
-        self.progress.setValue(100)
+        self.installer_path = installer_path
+        self.progress.hide()
+        self.status_label.setText(f"v{self.latest_version} ready!")
+        self.restart_btn.show()
+
+    def _do_restart_update(self):
+        self.restart_btn.setEnabled(False)
+        self.status_label.setText("Restarting...")
 
         # Find the path to the current app executable and its install dir
         if getattr(sys, 'frozen', False):
@@ -439,17 +411,15 @@ class UpdateDialog(QDialog):
         bat_path = os.path.join(bat_dir, "update.bat")
         with open(bat_path, "w") as f:
             f.write(f'@echo off\n')
-            # Wait for the app to fully close before installing
             f.write(f':waitloop\n')
             f.write(f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find /I "PDF" >nul && (\n')
             f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
             f.write(f'  goto waitloop\n')
             f.write(f')\n')
-            f.write(f'ping 127.0.0.1 -n 4 > nul\n')  # extra grace period
-            f.write(f'"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /DIR="{app_dir}"\n')
-            f.write(f'del "%~f0"\n')  # delete the batch file
+            f.write(f'ping 127.0.0.1 -n 4 > nul\n')
+            f.write(f'"{self.installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS /DIR="{app_dir}"\n')
+            f.write(f'del "%~f0"\n')
 
-        # Launch the batch script hidden and close the app
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
@@ -459,7 +429,6 @@ class UpdateDialog(QDialog):
             creationflags=subprocess.CREATE_NO_WINDOW
         )
 
-        # Close the app
         QApplication.instance().quit()
 
 
@@ -2074,14 +2043,22 @@ class MainWindow(QMainWindow):
         # Apply initial scale
         self._apply_scale()
 
+        # Update banner placeholder (inserted above tabs when update is ready)
+        self._update_banner = None
+        self._main_layout = main_layout
+
         # Check for updates in background
         self._update_checker = UpdateChecker()
-        self._update_checker.update_available.connect(self._show_update_dialog)
+        self._update_checker.update_available.connect(self._on_update_available)
         self._update_checker.start()
 
-    def _show_update_dialog(self, latest_version, download_url):
-        dialog = UpdateDialog(self, latest_version, download_url)
-        dialog.exec_()
+    def _on_update_available(self, latest_version, download_url):
+        """Auto-download update and show an in-app banner."""
+        if self._update_banner is not None:
+            return  # already showing
+        self._update_banner = UpdateBanner(self, latest_version, download_url)
+        # Insert banner after subtitle (index 2: header=0, subtitle=1)
+        self._main_layout.insertWidget(2, self._update_banner)
 
     def _collect_scalable_widgets(self, widget):
         """Walk the widget tree and record every widget's base font size."""
