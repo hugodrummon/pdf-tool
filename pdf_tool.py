@@ -4,18 +4,14 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.15"
+APP_VERSION = "1.5.16"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
 
-# Prevent DLL hijacking — allow system dirs + PyInstaller bundle, block app install dir
+# Prevent DLL hijacking — remove current directory from DLL search order
 if sys.platform == "win32":
     import ctypes
-    # LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_APPLICATION_DIR
-    # APPLICATION_DIR = the _MEI temp folder (where PyInstaller extracts), not the install dir
-    ctypes.windll.kernel32.SetDefaultDllDirectories(0x00000800 | 0x00000200)
-    # Also remove CWD from search path
     ctypes.windll.kernel32.SetDllDirectoryW("")
 
 # Built exe: only ship these tabs. Running from source: show all tabs for development.
