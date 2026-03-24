@@ -4,16 +4,31 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.4"
+APP_VERSION = "1.5.5"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 import sys
 
 # Built exe: only ship these tabs. Running from source: show all tabs for development.
 ENABLED_TABS = ["Compress", "Merge"] if getattr(sys, 'frozen', False) else None
+import atexit
 import os
 import subprocess
 import shutil
 import tempfile
+
+# Track temp dirs for cleanup on exit
+_temp_dirs = []
+
+def _tracked_mkdtemp():
+    d = _tracked_mkdtemp()
+    _temp_dirs.append(d)
+    return d
+
+def _cleanup_temp_dirs():
+    for d in _temp_dirs:
+        shutil.rmtree(d, ignore_errors=True)
+
+atexit.register(_cleanup_temp_dirs)
 import json
 import webbrowser
 from pathlib import Path
@@ -127,6 +142,7 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
 
     args = [
         gs_exe,
+        "-dSAFER",
         "-sDEVICE=pdfwrite",
         "-dCompatibilityLevel=1.4",
         f"-dPDFSETTINGS={quality}",
@@ -198,7 +214,7 @@ class CompressWorker(QThread):
             self.finished.emit(True, self.input_path, orig_size, orig_size)
             return
 
-        tmp_dir = tempfile.mkdtemp()
+        tmp_dir = _tracked_mkdtemp()
         output_path = os.path.join(tmp_dir, "compressed.pdf")
 
         # Pick quality: go straight to /screen for files well above target
@@ -230,7 +246,7 @@ class MergeWorker(QThread):
         self.gs_exe = gs_exe
 
     def run(self):
-        tmp_dir = tempfile.mkdtemp()
+        tmp_dir = _tracked_mkdtemp()
         merged_path = os.path.join(tmp_dir, "merged.pdf")
         combined_size = sum(os.path.getsize(p) for p in self.file_paths)
 
@@ -295,7 +311,8 @@ class UpdateChecker(QThread):
                     if "install" in asset["name"].lower() and asset["name"].endswith(".exe"):
                         download_url = asset["browser_download_url"]
                         break
-                self.update_available.emit(latest, download_url)
+                if download_url.startswith("https://github.com/"):
+                    self.update_available.emit(latest, download_url)
         except Exception:
             pass  # Silent fail — no internet, no problem
 
@@ -311,7 +328,7 @@ class UpdateDownloader(QThread):
 
     def run(self):
         try:
-            tmp_dir = tempfile.mkdtemp()
+            tmp_dir = _tracked_mkdtemp()
             installer_path = os.path.join(tmp_dir, "Install PDF Tool.exe")
             req = Request(self.download_url)
             with urlopen(req, timeout=60) as resp:
@@ -410,7 +427,7 @@ class UpdateBanner(QFrame):
         # 1. Waits for this app to fully close
         # 2. Runs the installer silently
         # 3. Waits for installer to finish, then relaunches
-        bat_dir = tempfile.mkdtemp()
+        bat_dir = _tracked_mkdtemp()
         bat_path = os.path.join(bat_dir, "update.bat")
         with open(bat_path, "w") as f:
             f.write(f'@echo off\n')
@@ -998,7 +1015,7 @@ class CompressTab(QWidget):
             path = self._saved_files[idx][1]
             if os.path.exists(path):
                 import subprocess
-                subprocess.Popen(f'explorer /select,"{path}"')
+                subprocess.Popen(["explorer", "/select,", path])
 
 
 # ---------------------------------------------------------------------------
@@ -1314,7 +1331,7 @@ class MergeTab(QWidget):
             path = self._saved_files[idx][1]
             if os.path.exists(path):
                 import subprocess
-                subprocess.Popen(f'explorer /select,"{path}"')
+                subprocess.Popen(["explorer", "/select,", path])
 
 
 # ---------------------------------------------------------------------------
@@ -1460,7 +1477,7 @@ class FlattenWorker(QThread):
     def run(self):
         orig_size = os.path.getsize(self.input_path)
         try:
-            tmp_dir = tempfile.mkdtemp()
+            tmp_dir = _tracked_mkdtemp()
             output_path = os.path.join(tmp_dir, "flattened.pdf")
             doc = fitz.open(self.input_path)
             for page in doc:
@@ -1652,7 +1669,7 @@ class RedactWorker(QThread):
     def run(self):
         orig_size = os.path.getsize(self.input_path)
         try:
-            tmp_dir = tempfile.mkdtemp()
+            tmp_dir = _tracked_mkdtemp()
             output_path = os.path.join(tmp_dir, "redacted.pdf")
             doc = fitz.open(self.input_path)
             total_redactions = 0
@@ -1894,7 +1911,7 @@ class OCRWorker(QThread):
         try:
             from PIL import Image
             import io
-            tmp_dir = tempfile.mkdtemp()
+            tmp_dir = _tracked_mkdtemp()
             output_path = os.path.join(tmp_dir, "ocr_output.pdf")
             doc = fitz.open(self.input_path)
             out_doc = fitz.open()
@@ -2115,7 +2132,7 @@ class ImageCompressWorker(QThread):
             elif img.mode != "RGB":
                 img = img.convert("RGB")
 
-            tmp_dir = tempfile.mkdtemp()
+            tmp_dir = _tracked_mkdtemp()
             ext = os.path.splitext(self.input_path)[1].lower()
 
             # For images with transparency, save as optimised PNG
