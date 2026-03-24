@@ -100,6 +100,26 @@ jobs:
           }
         shell: pwsh
 
+      - name: Sign installer
+        shell: python
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          import hashlib, base64, os
+          from nacl.signing import SigningKey
+
+          installer = "installer_output/Install PDF Tool.exe"
+          digest = hashlib.sha256(open(installer, "rb").read()).hexdigest()
+          print(f"SHA256: {digest}")
+
+          key = SigningKey(base64.b64decode(os.environ["UPDATE_SIGNING_KEY"]))
+          sig = key.sign(digest.encode())
+
+          with open("installer_output/Install PDF Tool.exe.sig", "w") as f:
+              f.write(sig.signature.hex() + "\n" + digest + "\n")
+
+          print("Signature file created.")
+
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
@@ -125,5 +145,6 @@ jobs:
             Download **Install PDF Tool.exe** below to install or update.
           files: |
             installer_output/Install PDF Tool.exe
+            installer_output/Install PDF Tool.exe.sig
             dist/PDF Tool.exe
           make_latest: true

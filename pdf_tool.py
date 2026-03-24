@@ -4,8 +4,9 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 GITHUB_REPO = "hugodrummon/pdf-tool"
+UPDATE_PUBLIC_KEY = "2alR7LXpi3Z+dXYPGNh4Yi9R1yPQBGJw847s4B/7/Yw="
 import sys
 
 # Built exe: only ship these tabs. Running from source: show all tabs for development.
@@ -288,7 +289,7 @@ class MergeWorker(QThread):
 
 class UpdateChecker(QThread):
     """Check GitHub Releases for a newer version. Runs in background, silent on failure."""
-    update_available = pyqtSignal(str, str)  # (latest_version, download_url)
+    update_available = pyqtSignal(str, str, str)  # (latest_version, download_url, sig_url)
 
     def run(self):
         try:
@@ -305,26 +306,30 @@ class UpdateChecker(QThread):
             current_parts = [int(x) for x in APP_VERSION.split(".")]
             latest_parts = [int(x) for x in latest.split(".")]
             if latest_parts > current_parts:
-                # Find the installer asset download URL, fall back to release page
+                # Find the installer and signature asset URLs
                 download_url = data.get("html_url", "")
+                sig_url = ""
                 for asset in data.get("assets", []):
-                    if "install" in asset["name"].lower() and asset["name"].endswith(".exe"):
+                    name = asset["name"]
+                    if name.lower().endswith(".exe.sig"):
+                        sig_url = asset["browser_download_url"]
+                    elif "install" in name.lower() and name.endswith(".exe"):
                         download_url = asset["browser_download_url"]
-                        break
                 if download_url.startswith("https://github.com/"):
-                    self.update_available.emit(latest, download_url)
+                    self.update_available.emit(latest, download_url, sig_url)
         except Exception:
             pass  # Silent fail — no internet, no problem
 
 
 class UpdateDownloader(QThread):
-    """Downloads the installer in the background."""
+    """Downloads the installer in the background and verifies its signature."""
     progress = pyqtSignal(int)  # percentage
     finished = pyqtSignal(bool, str)  # success, file_path
 
-    def __init__(self, download_url: str):
+    def __init__(self, download_url: str, sig_url: str = ""):
         super().__init__()
         self.download_url = download_url
+        self.sig_url = sig_url
 
     def run(self):
         try:
@@ -345,6 +350,36 @@ class UpdateDownloader(QThread):
                         if total > 0:
                             self.progress.emit(int(downloaded * 100 / total))
             self.progress.emit(100)
+
+            # Verify signature before trusting the installer
+            if self.sig_url:
+                try:
+                    import hashlib
+                    import base64
+                    from nacl.signing import VerifyKey
+                    from nacl.exceptions import BadSignatureError
+
+                    sig_req = Request(self.sig_url)
+                    with urlopen(sig_req, timeout=15) as resp:
+                        lines = resp.read().decode().strip().splitlines()
+                    if len(lines) < 2:
+                        self.finished.emit(False, "")
+                        return
+                    sig_hex, expected_hash = lines[0], lines[1]
+
+                    actual_hash = hashlib.sha256(
+                        open(installer_path, "rb").read()
+                    ).hexdigest()
+                    if actual_hash != expected_hash:
+                        self.finished.emit(False, "")
+                        return
+
+                    vk = VerifyKey(base64.b64decode(UPDATE_PUBLIC_KEY))
+                    vk.verify(expected_hash.encode(), bytes.fromhex(sig_hex))
+                except (BadSignatureError, Exception):
+                    self.finished.emit(False, "")
+                    return
+
             self.finished.emit(True, installer_path)
         except Exception:
             self.finished.emit(False, "")
@@ -353,9 +388,10 @@ class UpdateDownloader(QThread):
 class UpdateBanner(QFrame):
     """In-app banner: auto-downloads update, shows 'Restart to update' button."""
 
-    def __init__(self, parent, latest_version, download_url):
+    def __init__(self, parent, latest_version, download_url, sig_url=""):
         super().__init__(parent)
         self.download_url = download_url
+        self.sig_url = sig_url
         self.latest_version = latest_version
         self.installer_path = ""
         self.downloader = None
@@ -393,7 +429,7 @@ class UpdateBanner(QFrame):
         self._start_download()
 
     def _start_download(self):
-        self.downloader = UpdateDownloader(self.download_url)
+        self.downloader = UpdateDownloader(self.download_url, self.sig_url)
         self.downloader.progress.connect(self.progress.setValue)
         self.downloader.finished.connect(self._on_download_finished)
         self.downloader.start()
@@ -2252,11 +2288,11 @@ class MainWindow(QMainWindow):
         self._update_checker.update_available.connect(self._on_update_available)
         self._update_checker.start()
 
-    def _on_update_available(self, latest_version, download_url):
+    def _on_update_available(self, latest_version, download_url, sig_url):
         """Auto-download update and show an in-app banner."""
         if self._update_banner is not None:
             return  # already showing
-        self._update_banner = UpdateBanner(self, latest_version, download_url)
+        self._update_banner = UpdateBanner(self, latest_version, download_url, sig_url)
         # Insert banner after subtitle (index 2: header=0, subtitle=1)
         self._main_layout.insertWidget(2, self._update_banner)
 
