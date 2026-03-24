@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.12"
+APP_VERSION = "1.5.13"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -59,8 +59,17 @@ atexit.register(_cleanup_temp_dirs)
 import json
 import webbrowser
 from pathlib import Path
+import hashlib
+import base64
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+
+try:
+    from nacl.signing import VerifyKey
+    from nacl.exceptions import BadSignatureError
+    HAS_NACL = True
+except ImportError:
+    HAS_NACL = False
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -380,13 +389,8 @@ class UpdateDownloader(QThread):
             self.progress.emit(100)
 
             # Verify signature before trusting the installer
-            if self.sig_url:
+            if self.sig_url and HAS_NACL:
                 try:
-                    import hashlib
-                    import base64
-                    from nacl.signing import VerifyKey
-                    from nacl.exceptions import BadSignatureError
-
                     sig_req = Request(self.sig_url)
                     with urlopen(sig_req, timeout=15) as resp:
                         lines = resp.read().decode().strip().splitlines()
@@ -404,7 +408,7 @@ class UpdateDownloader(QThread):
 
                     vk = VerifyKey(base64.b64decode(UPDATE_PUBLIC_KEY))
                     vk.verify(expected_hash.encode(), bytes.fromhex(sig_hex))
-                except (BadSignatureError, Exception):
+                except (BadSignatureError, URLError, ValueError, OSError):
                     self.finished.emit(False, "")
                     return
 
