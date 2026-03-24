@@ -4,15 +4,15 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.13"
+APP_VERSION = "1.5.14"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
 
-# Prevent DLL hijacking — remove current directory from DLL search order
+# Prevent DLL hijacking — restrict DLL loading to system directories only
 if sys.platform == "win32":
     import ctypes
-    ctypes.windll.kernel32.SetDllDirectoryW("")
+    ctypes.windll.kernel32.SetDefaultDllDirectories(0x00000800)  # LOAD_LIBRARY_SEARCH_SYSTEM32
 
 # Built exe: only ship these tabs. Running from source: show all tabs for development.
 ENABLED_TABS = ["Compress", "Merge"] if getattr(sys, 'frozen', False) else None
