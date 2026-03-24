@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.16"
+APP_VERSION = "1.5.17"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -511,7 +511,7 @@ class UpdateBanner(QFrame):
             f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
             f.write(f'  goto waitinstall\n')
             f.write(f')\n')
-            f.write(f'ping 127.0.0.1 -n 3 > nul\n')
+            f.write(f'ping 127.0.0.1 -n 15 > nul\n')
             # Relaunch the app
             f.write(f'start "" "{app_exe}"\n')
             # Clean up this batch script
