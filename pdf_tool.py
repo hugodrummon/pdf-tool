@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.11"
+APP_VERSION = "1.5.12"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -482,28 +482,35 @@ class UpdateBanner(QFrame):
         # Find the path to the current app executable and its install dir
         if getattr(sys, 'frozen', False):
             app_exe = sys.executable
-            app_dir = os.path.dirname(app_exe)
         else:
             app_exe = os.path.abspath(sys.argv[0])
-            app_dir = os.path.dirname(app_exe)
 
-        # Create a batch script that:
-        # 1. Waits for this app to fully close
-        # 2. Runs the installer silently
-        # 3. Waits for installer to finish, then relaunches
-        bat_dir = _tracked_mkdtemp()
+        # Use a plain tempfile dir (NOT tracked) so atexit doesn't delete the
+        # batch script while it's still running.
+        bat_dir = tempfile.mkdtemp()
         bat_path = os.path.join(bat_dir, "update.bat")
         with open(bat_path, "w") as f:
             f.write(f'@echo off\n')
+            # Wait for the app process to fully exit
             f.write(f':waitloop\n')
             f.write(f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find /I "PDF" >nul && (\n')
             f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
             f.write(f'  goto waitloop\n')
             f.write(f')\n')
-            f.write(f'ping 127.0.0.1 -n 5 > nul\n')
+            # Extra wait for PyInstaller _MEI temp folder to be released
+            f.write(f'ping 127.0.0.1 -n 4 > nul\n')
+            # Run the installer silently
             f.write(f'"{self.installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\n')
-            f.write(f'ping 127.0.0.1 -n 6 > nul\n')
+            # Wait for installer to fully finish writing files
+            f.write(f':waitinstall\n')
+            f.write(f'tasklist /FI "IMAGENAME eq Install PDF Tool.exe" 2>nul | find /I "Install" >nul && (\n')
+            f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
+            f.write(f'  goto waitinstall\n')
+            f.write(f')\n')
+            f.write(f'ping 127.0.0.1 -n 3 > nul\n')
+            # Relaunch the app
             f.write(f'start "" "{app_exe}"\n')
+            # Clean up this batch script
             f.write(f'del "%~f0"\n')
 
         startupinfo = subprocess.STARTUPINFO()
