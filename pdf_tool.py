@@ -4,9 +4,9 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.6"
+APP_VERSION = "1.5.7"
 GITHUB_REPO = "hugodrummon/pdf-tool"
-UPDATE_PUBLIC_KEY = "2alR7LXpi3Z+dXYPGNh4Yi9R1yPQBGJw847s4B/7/Yw="
+UPDATE_PUBLIC_KEY = "Mp+b6D+E7YWarFtThbwsmPNqBBRRRY2z0i2f+lVAf2I="
 import sys
 
 # Built exe: only ship these tabs. Running from source: show all tabs for development.
