@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.8"
+APP_VERSION = "1.5.9"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -21,13 +21,34 @@ import tempfile
 _temp_dirs = []
 
 def _tracked_mkdtemp():
-    d = _tracked_mkdtemp()
+    d = tempfile.mkdtemp()
     _temp_dirs.append(d)
     return d
 
+def _secure_delete_file(path):
+    """Overwrite file contents before deleting — prevents recovery of legal docs."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "wb") as f:
+            f.write(b'\x00' * size)
+            f.flush()
+            os.fsync(f.fileno())
+        os.remove(path)
+    except OSError:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
 def _cleanup_temp_dirs():
     for d in _temp_dirs:
-        shutil.rmtree(d, ignore_errors=True)
+        try:
+            for root, dirs, files in os.walk(d):
+                for fname in files:
+                    _secure_delete_file(os.path.join(root, fname))
+            shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
 
 atexit.register(_cleanup_temp_dirs)
 import json
