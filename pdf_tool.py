@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.10"
+APP_VERSION = "1.5.11"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -342,8 +342,10 @@ class UpdateChecker(QThread):
                     elif "install" in name.lower() and name.endswith(".exe"):
                         download_url = asset["browser_download_url"]
                 if download_url.startswith("https://github.com/"):
+                    if sig_url and not sig_url.startswith("https://github.com/"):
+                        sig_url = ""
                     self.update_available.emit(latest, download_url, sig_url)
-        except Exception:
+        except (URLError, ValueError, KeyError, OSError):
             pass  # Silent fail — no internet, no problem
 
 

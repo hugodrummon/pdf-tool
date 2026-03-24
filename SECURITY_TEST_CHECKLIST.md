@@ -42,7 +42,17 @@ Run these tests after all security changes are complete.
 - [ ] Confirm installer uses `PrivilegesRequired=lowest` (no admin needed)
 - [ ] Confirm no files installed to `C:\` root or world-writable locations
 
-## 7. General
+## 7. Static Analysis (Bandit)
+- [x] No `shell=True` in subprocess calls
+- [x] No `eval()` or `exec()`
+- [x] No pickle/marshal deserialization
+- [x] No hardcoded passwords or secrets (public key is not a secret)
+- [x] No weak hashing (SHA-256 used)
+- [x] No `os.system()` calls
+- [x] URL validation on both download_url and sig_url
+- [x] Specific exception types caught (not bare `except Exception`)
+
+## 8. General
 - [ ] App launches without errors on clean install
 - [ ] Compress tab works with PDF and image files
 - [ ] Merge tab works with multiple PDFs
