@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.29"
+APP_VERSION = "1.5.30"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -255,8 +255,9 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
     return result.returncode == 0
 
 
-def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str) -> bool:
-    """Last-resort compression — forces image downsampling to 72 DPI, low JPEG quality, recompresses everything."""
+def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str,
+                            dpi: int = 72, qfactor: float = 2.4) -> bool:
+    """Aggressive compression — forces image downsampling and recompression at given DPI/quality."""
     env = os.environ.copy()
     bundle_dir = get_bundle_dir()
     gs_lib_path = os.path.join(bundle_dir, "gs", "lib")
@@ -282,9 +283,9 @@ def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str) -> b
         "-dDownsampleColorImages=true",
         "-dDownsampleGrayImages=true",
         "-dDownsampleMonoImages=true",
-        "-dColorImageResolution=72",
-        "-dGrayImageResolution=72",
-        "-dMonoImageResolution=72",
+        f"-dColorImageResolution={dpi}",
+        f"-dGrayImageResolution={dpi}",
+        f"-dMonoImageResolution={dpi}",
         "-dColorImageDownsampleType=/Bicubic",
         "-dGrayImageDownsampleType=/Bicubic",
         "-dMonoImageDownsampleType=/Subsample",
@@ -296,7 +297,7 @@ def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str) -> b
         "-dColorConversionStrategy=/LeaveColorUnchanged",
         f"-sOutputFile={output_path}",
         "-c",
-        "<< /ColorACSImageDict << /QFactor 2.4 /Blend 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2] >> /GrayACSImageDict << /QFactor 2.4 /Blend 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2] >> >> setdistillerparams",
+        f"<< /ColorACSImageDict << /QFactor {qfactor} /Blend 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2] >> /GrayACSImageDict << /QFactor {qfactor} /Blend 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2] >> >> setdistillerparams",
         "-f",
         input_path,
     ]
@@ -360,11 +361,14 @@ class CompressWorker(QThread):
                 ok2 = compress_pdf(self.input_path, output_path, self.gs_exe, "/screen")
                 if ok2 and os.path.isfile(output_path):
                     new_size = os.path.getsize(output_path)
-            # If still over target, try aggressive compression (downsample images to 120 DPI)
+            # If still over target, progressively lower DPI until under 10 MB
             if new_size > TARGET_SIZE_BYTES:
-                ok3 = compress_pdf_aggressive(self.input_path, output_path, self.gs_exe)
-                if ok3 and os.path.isfile(output_path):
-                    new_size = os.path.getsize(output_path)
+                for dpi, qf in [(72, 2.4), (50, 2.4), (36, 3.0), (24, 4.0)]:
+                    ok3 = compress_pdf_aggressive(self.input_path, output_path, self.gs_exe, dpi=dpi, qfactor=qf)
+                    if ok3 and os.path.isfile(output_path):
+                        new_size = os.path.getsize(output_path)
+                        if new_size <= TARGET_SIZE_BYTES:
+                            break
             self.finished.emit(True, output_path, orig_size, new_size)
         else:
             self.finished.emit(False, "", orig_size, 0)
@@ -414,11 +418,14 @@ class MergeWorker(QThread):
                 ok2 = compress_pdf(merged_path, compressed_path, self.gs_exe, "/screen")
                 if ok2 and os.path.isfile(compressed_path):
                     new_size = os.path.getsize(compressed_path)
-            # If still over target, try aggressive compression
+            # If still over target, progressively lower DPI until under 10 MB
             if new_size > TARGET_SIZE_BYTES:
-                ok3 = compress_pdf_aggressive(merged_path, compressed_path, self.gs_exe)
-                if ok3 and os.path.isfile(compressed_path):
-                    new_size = os.path.getsize(compressed_path)
+                for dpi, qf in [(72, 2.4), (50, 2.4), (36, 3.0), (24, 4.0)]:
+                    ok3 = compress_pdf_aggressive(merged_path, compressed_path, self.gs_exe, dpi=dpi, qfactor=qf)
+                    if ok3 and os.path.isfile(compressed_path):
+                        new_size = os.path.getsize(compressed_path)
+                        if new_size <= TARGET_SIZE_BYTES:
+                            break
             self.finished.emit(True, compressed_path, combined_size, new_size)
         else:
             self.finished.emit(True, merged_path, combined_size, merged_size)
