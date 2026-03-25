@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.27"
+APP_VERSION = "1.5.28"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -48,14 +48,44 @@ def _secure_delete_file(path):
 def _cleanup_temp_dirs():
     for d in _temp_dirs:
         try:
-            for root, dirs, files in os.walk(d):
+            # Skip if the path is a symlink/junction — prevents symlink attack
+            if os.path.islink(d) or (sys.platform == "win32" and os.path.isdir(d) and os.stat(d).st_file_attributes & 0x400):
+                continue
+            for root, dirs, files in os.walk(d, followlinks=False):
                 for fname in files:
-                    _secure_delete_file(os.path.join(root, fname))
+                    fpath = os.path.join(root, fname)
+                    if not os.path.islink(fpath):
+                        _secure_delete_file(fpath)
             shutil.rmtree(d, ignore_errors=True)
         except OSError:
             pass
 
 atexit.register(_cleanup_temp_dirs)
+
+def _cleanup_orphaned_temp():
+    """Clean up temp dirs from previous crashed sessions."""
+    try:
+        temp_root = tempfile.gettempdir()
+        for name in os.listdir(temp_root):
+            d = os.path.join(temp_root, name)
+            if not name.startswith("tmp") or not os.path.isdir(d):
+                continue
+            if os.path.islink(d):
+                continue
+            # Check if it contains our signature files
+            has_our_files = any(
+                f in ("compressed.pdf", "merged.pdf")
+                for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))
+            )
+            if has_our_files:
+                for fname in os.listdir(d):
+                    fpath = os.path.join(d, fname)
+                    if os.path.isfile(fpath) and not os.path.islink(fpath):
+                        _secure_delete_file(fpath)
+                shutil.rmtree(d, ignore_errors=True)
+    except OSError:
+        pass
+
 import json
 import webbrowser
 from pathlib import Path
@@ -460,6 +490,10 @@ class UpdateDownloader(QThread):
             self.progress.emit(100)
 
             # Verify signature before trusting the installer
+            # If nacl is available, REQUIRE a valid signature — never fail-open
+            if HAS_NACL and not self.sig_url:
+                self.finished.emit(False, "")
+                return
             if self.sig_url and HAS_NACL:
                 try:
                     sig_req = Request(self.sig_url)
@@ -2469,6 +2503,7 @@ class MainWindow(QMainWindow):
 # ---------------------------------------------------------------------------
 
 def main():
+    _cleanup_orphaned_temp()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(GLOBAL_STYLE)
