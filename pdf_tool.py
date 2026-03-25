@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.32"
+APP_VERSION = "1.5.33"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -365,16 +365,23 @@ class CompressWorker(QThread):
                     new_size = os.path.getsize(output_path)
             # If still over target, progressively lower DPI until under 10 MB
             if new_size > TARGET_SIZE_BYTES:
-                # Try color first, then grayscale at each DPI level
+                best_size = new_size
+                best_path = output_path
+                tmp_dir2 = _tracked_mkdtemp()
+                trial_path = os.path.join(tmp_dir2, "trial.pdf")
                 for dpi, qf, gray in [
                     (72, 2.4, False), (50, 2.4, False), (36, 3.0, False),
                     (72, 2.4, True), (50, 2.4, True), (36, 3.0, True), (24, 4.0, True),
                 ]:
-                    ok3 = compress_pdf_aggressive(self.input_path, output_path, self.gs_exe, dpi=dpi, qfactor=qf, grayscale=gray)
-                    if ok3 and os.path.isfile(output_path):
-                        new_size = os.path.getsize(output_path)
-                        if new_size <= TARGET_SIZE_BYTES:
+                    ok3 = compress_pdf_aggressive(self.input_path, trial_path, self.gs_exe, dpi=dpi, qfactor=qf, grayscale=gray)
+                    if ok3 and os.path.isfile(trial_path):
+                        trial_size = os.path.getsize(trial_path)
+                        if trial_size < best_size:
+                            best_size = trial_size
+                            shutil.copy2(trial_path, output_path)
+                        if best_size <= TARGET_SIZE_BYTES:
                             break
+                new_size = best_size
             self.finished.emit(True, output_path, orig_size, new_size)
         else:
             self.finished.emit(False, "", orig_size, 0)
@@ -426,15 +433,22 @@ class MergeWorker(QThread):
                     new_size = os.path.getsize(compressed_path)
             # If still over target, progressively lower DPI until under 10 MB
             if new_size > TARGET_SIZE_BYTES:
+                best_size = new_size
+                tmp_dir2 = _tracked_mkdtemp()
+                trial_path = os.path.join(tmp_dir2, "trial.pdf")
                 for dpi, qf, gray in [
                     (72, 2.4, False), (50, 2.4, False), (36, 3.0, False),
                     (72, 2.4, True), (50, 2.4, True), (36, 3.0, True), (24, 4.0, True),
                 ]:
-                    ok3 = compress_pdf_aggressive(merged_path, compressed_path, self.gs_exe, dpi=dpi, qfactor=qf, grayscale=gray)
-                    if ok3 and os.path.isfile(compressed_path):
-                        new_size = os.path.getsize(compressed_path)
-                        if new_size <= TARGET_SIZE_BYTES:
+                    ok3 = compress_pdf_aggressive(merged_path, trial_path, self.gs_exe, dpi=dpi, qfactor=qf, grayscale=gray)
+                    if ok3 and os.path.isfile(trial_path):
+                        trial_size = os.path.getsize(trial_path)
+                        if trial_size < best_size:
+                            best_size = trial_size
+                            shutil.copy2(trial_path, compressed_path)
+                        if best_size <= TARGET_SIZE_BYTES:
                             break
+                new_size = best_size
             self.finished.emit(True, compressed_path, combined_size, new_size)
         else:
             self.finished.emit(True, merged_path, combined_size, merged_size)
