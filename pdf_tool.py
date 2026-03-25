@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.17"
+APP_VERSION = "1.5.18"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -511,7 +511,13 @@ class UpdateBanner(QFrame):
             f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
             f.write(f'  goto waitinstall\n')
             f.write(f')\n')
-            f.write(f'ping 127.0.0.1 -n 15 > nul\n')
+            # Wait until all _MEI folders from old process are gone
+            f.write(f':waitmei\n')
+            f.write(f'dir /b "%LOCALAPPDATA%\\Temp\\_MEI*" >nul 2>nul && (\n')
+            f.write(f'  ping 127.0.0.1 -n 3 > nul\n')
+            f.write(f'  goto waitmei\n')
+            f.write(f')\n')
+            f.write(f'ping 127.0.0.1 -n 3 > nul\n')
             # Relaunch the app
             f.write(f'start "" "{app_exe}"\n')
             # Clean up this batch script
