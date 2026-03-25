@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.21"
+APP_VERSION = "1.5.22"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -481,32 +481,12 @@ class UpdateBanner(QFrame):
 
     def _do_restart_update(self):
         self.restart_btn.setEnabled(False)
-        self.status_label.setText("Installing update...")
+        self.status_label.setText("Closing and installing update...")
 
-        # Create a batch script that waits for the app to close, then runs the installer
-        bat_dir = tempfile.mkdtemp()
-        bat_path = os.path.join(bat_dir, "update.bat")
-        with open(bat_path, "w") as f:
-            f.write(f'@echo off\n')
-            # Wait for the app process to fully exit
-            f.write(f':waitloop\n')
-            f.write(f'tasklist /FI "PID eq {os.getpid()}" 2>nul | find /I "PDF" >nul && (\n')
-            f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
-            f.write(f'  goto waitloop\n')
-            f.write(f')\n')
-            f.write(f'ping 127.0.0.1 -n 3 > nul\n')
-            # Run the installer silently
-            f.write(f'"{self.installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\n')
-            # Clean up this batch script
-            f.write(f'del "%~f0"\n')
-
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
+        # Launch the installer directly — Inno Setup's /CLOSEAPPLICATIONS
+        # will handle closing this app and waiting for file locks to release.
         subprocess.Popen(
-            ["cmd.exe", "/c", bat_path],
-            startupinfo=startupinfo,
-            creationflags=subprocess.CREATE_NO_WINDOW
+            [self.installer_path, "/SILENT", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS"],
         )
 
         QApplication.instance().quit()
