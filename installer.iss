@@ -28,5 +28,4 @@ Name: "{group}\User Guide"; Filename: "{app}\User Guide - PDF Tool.txt"
 Name: "{group}\Uninstall PDF Tool"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "cmd.exe"; Parameters: "/c ping 127.0.0.1 -n 20 > nul"; StatusMsg: "Finishing up..."; Flags: runhidden waituntilterminated
-Filename: "{app}\PDF Tool.exe"; Description: "Open PDF Tool now"; Flags: nowait postinstall shellexec runasoriginaluser
+Filename: "{app}\PDF Tool.exe"; Description: "Open PDF Tool now"; Flags: nowait postinstall skipifsilent shellexec runasoriginaluser
