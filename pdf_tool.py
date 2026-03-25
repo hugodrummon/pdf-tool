@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.31"
+APP_VERSION = "1.5.32"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -256,7 +256,8 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
 
 
 def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str,
-                            dpi: int = 72, qfactor: float = 2.4) -> bool:
+                            dpi: int = 72, qfactor: float = 2.4,
+                            grayscale: bool = False) -> bool:
     """Aggressive compression — forces image downsampling and recompression at given DPI/quality."""
     env = os.environ.copy()
     bundle_dir = get_bundle_dir()
@@ -294,7 +295,8 @@ def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str,
         "-dAutoFilterGrayImages=false",
         "-dColorImageFilter=/DCTEncode",
         "-dGrayImageFilter=/DCTEncode",
-        "-dColorConversionStrategy=/LeaveColorUnchanged",
+        f"-dColorConversionStrategy={'=/Gray' if grayscale else '=/LeaveColorUnchanged'}",
+        ] + (["-dProcessColorModel=/DeviceGray"] if grayscale else []) + [
         f"-sOutputFile={output_path}",
         "-c",
         f"<< /ColorACSImageDict << /QFactor {qfactor} /Blend 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2] >> /GrayACSImageDict << /QFactor {qfactor} /Blend 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2] >> >> setdistillerparams",
@@ -363,8 +365,12 @@ class CompressWorker(QThread):
                     new_size = os.path.getsize(output_path)
             # If still over target, progressively lower DPI until under 10 MB
             if new_size > TARGET_SIZE_BYTES:
-                for dpi, qf in [(72, 2.4), (50, 2.4), (36, 3.0), (24, 4.0)]:
-                    ok3 = compress_pdf_aggressive(self.input_path, output_path, self.gs_exe, dpi=dpi, qfactor=qf)
+                # Try color first, then grayscale at each DPI level
+                for dpi, qf, gray in [
+                    (72, 2.4, False), (50, 2.4, False), (36, 3.0, False),
+                    (72, 2.4, True), (50, 2.4, True), (36, 3.0, True), (24, 4.0, True),
+                ]:
+                    ok3 = compress_pdf_aggressive(self.input_path, output_path, self.gs_exe, dpi=dpi, qfactor=qf, grayscale=gray)
                     if ok3 and os.path.isfile(output_path):
                         new_size = os.path.getsize(output_path)
                         if new_size <= TARGET_SIZE_BYTES:
@@ -420,8 +426,11 @@ class MergeWorker(QThread):
                     new_size = os.path.getsize(compressed_path)
             # If still over target, progressively lower DPI until under 10 MB
             if new_size > TARGET_SIZE_BYTES:
-                for dpi, qf in [(72, 2.4), (50, 2.4), (36, 3.0), (24, 4.0)]:
-                    ok3 = compress_pdf_aggressive(merged_path, compressed_path, self.gs_exe, dpi=dpi, qfactor=qf)
+                for dpi, qf, gray in [
+                    (72, 2.4, False), (50, 2.4, False), (36, 3.0, False),
+                    (72, 2.4, True), (50, 2.4, True), (36, 3.0, True), (24, 4.0, True),
+                ]:
+                    ok3 = compress_pdf_aggressive(merged_path, compressed_path, self.gs_exe, dpi=dpi, qfactor=qf, grayscale=gray)
                     if ok3 and os.path.isfile(compressed_path):
                         new_size = os.path.getsize(compressed_path)
                         if new_size <= TARGET_SIZE_BYTES:
