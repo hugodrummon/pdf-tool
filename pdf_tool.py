@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.23"
+APP_VERSION = "1.5.24"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -225,7 +225,7 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
 
 
 def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str) -> bool:
-    """Last-resort compression — forces image downsampling to 120 DPI and recompresses all images."""
+    """Last-resort compression — forces image downsampling to 72 DPI, low JPEG quality, recompresses everything."""
     env = os.environ.copy()
     bundle_dir = get_bundle_dir()
     gs_lib_path = os.path.join(bundle_dir, "gs", "lib")
@@ -251,9 +251,9 @@ def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str) -> b
         "-dDownsampleColorImages=true",
         "-dDownsampleGrayImages=true",
         "-dDownsampleMonoImages=true",
-        "-dColorImageResolution=120",
-        "-dGrayImageResolution=120",
-        "-dMonoImageResolution=120",
+        "-dColorImageResolution=72",
+        "-dGrayImageResolution=72",
+        "-dMonoImageResolution=72",
         "-dColorImageDownsampleType=/Bicubic",
         "-dGrayImageDownsampleType=/Bicubic",
         "-dMonoImageDownsampleType=/Subsample",
@@ -262,6 +262,7 @@ def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str) -> b
         "-dAutoFilterGrayImages=false",
         "-dColorImageFilter=/DCTEncode",
         "-dGrayImageFilter=/DCTEncode",
+        "-dJPEGQ=40",
         "-dColorConversionStrategy=/LeaveColorUnchanged",
         f"-sOutputFile={output_path}",
         input_path,
