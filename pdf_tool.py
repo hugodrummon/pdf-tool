@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.22"
+APP_VERSION = "1.5.23"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -224,6 +224,64 @@ def compress_pdf(input_path: str, output_path: str, gs_exe: str,
     return result.returncode == 0
 
 
+def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str) -> bool:
+    """Last-resort compression — forces image downsampling to 120 DPI and recompresses all images."""
+    env = os.environ.copy()
+    bundle_dir = get_bundle_dir()
+    gs_lib_path = os.path.join(bundle_dir, "gs", "lib")
+    gs_resource_path = os.path.join(bundle_dir, "gs", "Resource")
+    if os.path.isdir(gs_lib_path):
+        env["GS_LIB"] = f"{gs_lib_path};{gs_resource_path}"
+
+    num_threads = min(os.cpu_count() or 2, 8)
+
+    args = [
+        gs_exe,
+        "-dSAFER",
+        "-sDEVICE=pdfwrite",
+        "-dCompatibilityLevel=1.4",
+        "-dPDFSETTINGS=/screen",
+        "-dNOPAUSE",
+        "-dBATCH",
+        "-dQUIET",
+        f"-dNumRenderingThreads={num_threads}",
+        "-dDetectDuplicateImages=true",
+        "-dCompressFonts=true",
+        "-dSubsetFonts=true",
+        "-dDownsampleColorImages=true",
+        "-dDownsampleGrayImages=true",
+        "-dDownsampleMonoImages=true",
+        "-dColorImageResolution=120",
+        "-dGrayImageResolution=120",
+        "-dMonoImageResolution=120",
+        "-dColorImageDownsampleType=/Bicubic",
+        "-dGrayImageDownsampleType=/Bicubic",
+        "-dMonoImageDownsampleType=/Subsample",
+        "-dPassThroughJPEGImages=false",
+        "-dAutoFilterColorImages=false",
+        "-dAutoFilterGrayImages=false",
+        "-dColorImageFilter=/DCTEncode",
+        "-dGrayImageFilter=/DCTEncode",
+        "-dColorConversionStrategy=/LeaveColorUnchanged",
+        f"-sOutputFile={output_path}",
+        input_path,
+    ]
+
+    startupinfo = None
+    creationflags = 0
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.ABOVE_NORMAL_PRIORITY_CLASS
+
+    result = subprocess.run(
+        args, startupinfo=startupinfo, capture_output=True,
+        creationflags=creationflags, env=env,
+    )
+    return result.returncode == 0
+
+
 # ---------------------------------------------------------------------------
 # Quality levels to try (best quality first, increasingly aggressive)
 # ---------------------------------------------------------------------------
@@ -267,6 +325,11 @@ class CompressWorker(QThread):
             if new_size > TARGET_SIZE_BYTES and quality == "/ebook":
                 ok2 = compress_pdf(self.input_path, output_path, self.gs_exe, "/screen")
                 if ok2 and os.path.isfile(output_path):
+                    new_size = os.path.getsize(output_path)
+            # If still over target, try aggressive compression (downsample images to 120 DPI)
+            if new_size > TARGET_SIZE_BYTES:
+                ok3 = compress_pdf_aggressive(self.input_path, output_path, self.gs_exe)
+                if ok3 and os.path.isfile(output_path):
                     new_size = os.path.getsize(output_path)
             self.finished.emit(True, output_path, orig_size, new_size)
         else:
@@ -316,6 +379,11 @@ class MergeWorker(QThread):
             if new_size > TARGET_SIZE_BYTES and quality == "/ebook":
                 ok2 = compress_pdf(merged_path, compressed_path, self.gs_exe, "/screen")
                 if ok2 and os.path.isfile(compressed_path):
+                    new_size = os.path.getsize(compressed_path)
+            # If still over target, try aggressive compression
+            if new_size > TARGET_SIZE_BYTES:
+                ok3 = compress_pdf_aggressive(merged_path, compressed_path, self.gs_exe)
+                if ok3 and os.path.isfile(compressed_path):
                     new_size = os.path.getsize(compressed_path)
             self.finished.emit(True, compressed_path, combined_size, new_size)
         else:
