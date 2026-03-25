@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.24"
+APP_VERSION = "1.5.25"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -262,8 +262,10 @@ def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str) -> b
         "-dAutoFilterGrayImages=false",
         "-dColorImageFilter=/DCTEncode",
         "-dGrayImageFilter=/DCTEncode",
-        "-dJPEGQ=40",
         "-dColorConversionStrategy=/LeaveColorUnchanged",
+        "-c",
+        "<< /ColorACSImageDict << /QFactor 2.4 /Blend 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2] >> /GrayACSImageDict << /QFactor 2.4 /Blend 1 /HSamples [2 1 1 2] /VSamples [2 1 1 2] >> >> setdistillerparams",
+        "-f",
         f"-sOutputFile={output_path}",
         input_path,
     ]
