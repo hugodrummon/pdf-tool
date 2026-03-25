@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.28"
+APP_VERSION = "1.5.29"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -106,12 +106,13 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QProgressBar, QTabWidget,
     QListWidget, QListWidgetItem, QFileDialog, QMessageBox,
     QSizePolicy, QFrame, QSpacerItem, QAbstractItemView, QDialog,
-    QTextEdit, QScrollArea, QSlider
+    QTextEdit, QScrollArea, QSlider, QSpinBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QSize, QTimer
-from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QDragEnterEvent, QDropEvent
+from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QDragEnterEvent, QDropEvent, QPixmap, QImage
+from PyQt5.QtWidgets import QGraphicsDropShadowEffect
 
-from PyPDF2 import PdfMerger
+from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 import fitz  # PyMuPDF — for redaction and flattening
 
 try:
@@ -1607,6 +1608,351 @@ class RenameTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# PDF viewer widget (reusable)
+# ---------------------------------------------------------------------------
+
+class PdfViewer(QWidget):
+    """Full-page scrollable PDF viewer with zoom. Renders pages vertically."""
+    page_changed = pyqtSignal(int, int)  # (current_page, total_pages)
+
+    def __init__(self, dpi=150):
+        super().__init__()
+        self._dpi = dpi
+        self._doc = None
+        self._page_widgets = []
+        self._total_pages = 0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Toolbar
+        toolbar = QFrame()
+        toolbar.setStyleSheet(
+            "QFrame { background: #f5f5f5; border-bottom: 1px solid #e0e0e0; }"
+        )
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(12, 6, 12, 6)
+        toolbar_layout.setSpacing(8)
+
+        self._page_label = QLabel("No file loaded")
+        self._page_label.setFont(QFont("Segoe UI", 10))
+        self._page_label.setStyleSheet("border: none; color: #555;")
+        toolbar_layout.addWidget(self._page_label)
+
+        toolbar_layout.addStretch()
+
+        zoom_out_btn = QPushButton("\u2212")
+        zoom_out_btn.setFixedSize(30, 30)
+        zoom_out_btn.setCursor(Qt.PointingHandCursor)
+        zoom_out_btn.setStyleSheet(
+            "QPushButton { background: #e0e0e0; border: none; border-radius: 4px; font-size: 16px; }"
+            "QPushButton:hover { background: #d0d0d0; }"
+        )
+        zoom_out_btn.clicked.connect(self._zoom_out)
+        toolbar_layout.addWidget(zoom_out_btn)
+
+        self._zoom_label = QLabel("100%")
+        self._zoom_label.setFont(QFont("Segoe UI", 10))
+        self._zoom_label.setMinimumWidth(44)
+        self._zoom_label.setAlignment(Qt.AlignCenter)
+        self._zoom_label.setStyleSheet("border: none; color: #555;")
+        toolbar_layout.addWidget(self._zoom_label)
+
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setFixedSize(30, 30)
+        zoom_in_btn.setCursor(Qt.PointingHandCursor)
+        zoom_in_btn.setStyleSheet(
+            "QPushButton { background: #e0e0e0; border: none; border-radius: 4px; font-size: 16px; }"
+            "QPushButton:hover { background: #d0d0d0; }"
+        )
+        zoom_in_btn.clicked.connect(self._zoom_in)
+        toolbar_layout.addWidget(zoom_in_btn)
+
+        layout.addWidget(toolbar)
+
+        # Scroll area with pages — light grey background like Adobe
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setStyleSheet(
+            "QScrollArea { background: #e8e8e8; border: none; }"
+        )
+        self._scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
+
+        self._container = QWidget()
+        self._container.setStyleSheet("background: #e8e8e8;")
+        self._pages_layout = QVBoxLayout(self._container)
+        self._pages_layout.setContentsMargins(24, 20, 24, 20)
+        self._pages_layout.setSpacing(16)
+        self._pages_layout.setAlignment(Qt.AlignHCenter)
+
+        self._scroll.setWidget(self._container)
+        layout.addWidget(self._scroll)
+
+        self._zoom = 1.0
+
+    def load_pdf(self, pdf_path):
+        """Load and render all pages."""
+        self._clear()
+        try:
+            self._doc = fitz.open(pdf_path)
+            self._total_pages = len(self._doc)
+            self._render_pages()
+            self._page_label.setText(f"Page 1 of {self._total_pages}")
+        except Exception:
+            self._page_label.setText("Could not load PDF")
+
+    def _render_pages(self):
+        """Render all pages at current zoom level."""
+        if not self._doc:
+            return
+
+        for w in self._page_widgets:
+            w.setParent(None)
+        self._page_widgets.clear()
+
+        render_dpi = int(self._dpi * self._zoom)
+
+        for i, page in enumerate(self._doc):
+            pix = page.get_pixmap(dpi=render_dpi)
+            img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(img)
+
+            # Page frame with shadow
+            page_frame = QFrame()
+            page_frame.setStyleSheet(
+                "QFrame { background: white; border: 1px solid #ccc; border-radius: 2px; }"
+            )
+            frame_layout = QVBoxLayout(page_frame)
+            frame_layout.setContentsMargins(0, 0, 0, 0)
+
+            label = QLabel()
+            label.setPixmap(pixmap)
+            label.setAlignment(Qt.AlignCenter)
+            label.setStyleSheet("border: none;")
+            frame_layout.addWidget(label)
+
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setBlurRadius(20)
+            shadow.setOffset(0, 2)
+            shadow.setColor(QColor(0, 0, 0, 60))
+            page_frame.setGraphicsEffect(shadow)
+
+            self._pages_layout.addWidget(page_frame)
+            self._page_widgets.append(page_frame)
+
+    def _clear(self):
+        if self._doc:
+            self._doc.close()
+            self._doc = None
+        for w in self._page_widgets:
+            w.setParent(None)
+        self._page_widgets.clear()
+        self._total_pages = 0
+        self._page_label.setText("No file loaded")
+
+    def _zoom_in(self):
+        if self._zoom < 3.0:
+            self._zoom = min(self._zoom + 0.25, 3.0)
+            self._zoom_label.setText(f"{int(self._zoom * 100)}%")
+            self._render_pages()
+
+    def _zoom_out(self):
+        if self._zoom > 0.25:
+            self._zoom = max(self._zoom - 0.25, 0.25)
+            self._zoom_label.setText(f"{int(self._zoom * 100)}%")
+            self._render_pages()
+
+    def _on_scroll(self):
+        """Track which page is currently visible."""
+        if not self._page_widgets:
+            return
+        viewport_top = self._scroll.verticalScrollBar().value()
+        for i, w in enumerate(self._page_widgets):
+            if w.y() + w.height() > viewport_top:
+                self._page_label.setText(f"Page {i + 1} of {self._total_pages}")
+                self.page_changed.emit(i + 1, self._total_pages)
+                break
+
+    def get_total_pages(self):
+        return self._total_pages
+
+    def scroll_to_page(self, page_num):
+        """Scroll to a specific page (1-based)."""
+        idx = page_num - 1
+        if 0 <= idx < len(self._page_widgets):
+            self._scroll.ensureWidgetVisible(self._page_widgets[idx])
+
+
+# ---------------------------------------------------------------------------
+# Split tab
+# ---------------------------------------------------------------------------
+
+class SplitTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.input_path = ""
+        self.total_pages = 0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        self.drop_zone = DropZone("Drop a PDF here to split it")
+        self.drop_zone.files_dropped.connect(self._on_file_dropped)
+        layout.addWidget(self.drop_zone)
+
+        self.split_frame = QFrame()
+        split_layout = QVBoxLayout(self.split_frame)
+        split_layout.setSpacing(12)
+
+        self.info_label = QLabel("")
+        self.info_label.setFont(QFont("Segoe UI", 13))
+        self.info_label.setAlignment(Qt.AlignCenter)
+        self.info_label.setWordWrap(True)
+        split_layout.addWidget(self.info_label)
+
+        self.viewer = PdfViewer(dpi=120)
+        self.viewer.setMinimumHeight(350)
+        split_layout.addWidget(self.viewer)
+
+        page_row = QHBoxLayout()
+        page_row.setSpacing(8)
+        page_label = QLabel("Split after page:")
+        page_label.setFont(QFont("Segoe UI", 13))
+        page_row.addWidget(page_label)
+        self.page_input = QSpinBox()
+        self.page_input.setMinimum(1)
+        self.page_input.setMaximum(1)
+        self.page_input.setMinimumHeight(36)
+        self.page_input.setFont(QFont("Segoe UI", 13))
+        page_row.addWidget(self.page_input)
+        page_row.addStretch()
+        split_layout.addLayout(page_row)
+
+        self.preview_label = QLabel("")
+        self.preview_label.setFont(QFont("Segoe UI", 11))
+        self.preview_label.setStyleSheet("color: #888;")
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setWordWrap(True)
+        split_layout.addWidget(self.preview_label)
+        self.page_input.valueChanged.connect(self._update_preview)
+
+        self.split_btn = QPushButton("Split PDF")
+        self.split_btn.setStyleSheet(BTN_PRIMARY)
+        self.split_btn.setCursor(Qt.PointingHandCursor)
+        self.split_btn.clicked.connect(self._split)
+        split_layout.addWidget(self.split_btn, alignment=Qt.AlignCenter)
+
+        self.split_frame.hide()
+        layout.addWidget(self.split_frame)
+
+        self.result_icon = QLabel()
+        self.result_icon.setFont(QFont("Segoe UI", 48))
+        self.result_icon.setAlignment(Qt.AlignCenter)
+        self.result_icon.hide()
+        layout.addWidget(self.result_icon)
+
+        self.result_text = QLabel("")
+        self.result_text.setFont(QFont("Segoe UI", 13))
+        self.result_text.setAlignment(Qt.AlignCenter)
+        self.result_text.setWordWrap(True)
+        self.result_text.hide()
+        layout.addWidget(self.result_text)
+
+        self.error_label = QLabel("")
+        self.error_label.setFont(QFont("Segoe UI", 13))
+        self.error_label.setStyleSheet("color: #d32f2f;")
+        self.error_label.setAlignment(Qt.AlignCenter)
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
+
+        layout.addStretch()
+
+    def _on_file_dropped(self, paths):
+        path = paths[0]
+        if not path.lower().endswith(".pdf"):
+            return
+
+        self.input_path = path
+        self.result_icon.hide()
+        self.result_text.hide()
+        self.error_label.hide()
+        self.split_btn.setEnabled(True)
+
+        try:
+            reader = PdfReader(self.input_path)
+            self.total_pages = len(reader.pages)
+        except Exception:
+            self.error_label.setText("Could not read this PDF.")
+            self.error_label.show()
+            return
+
+        if self.total_pages < 2:
+            self.error_label.setText("This PDF only has 1 page — nothing to split.")
+            self.error_label.show()
+            return
+
+        fname = os.path.basename(self.input_path)
+        self.info_label.setText(f"Selected: {fname} ({self.total_pages} pages)")
+        self.viewer.load_pdf(self.input_path)
+        self.page_input.setMaximum(self.total_pages - 1)
+        self.page_input.setValue(1)
+        self._update_preview()
+        self.split_frame.show()
+
+    def _update_preview(self):
+        page = self.page_input.value()
+        self.preview_label.setText(
+            f"Part 1: pages 1\u2013{page}  |  Part 2: pages {page + 1}\u2013{self.total_pages}"
+        )
+
+    def _split(self):
+        self.split_btn.setEnabled(False)
+        self.result_icon.hide()
+        self.result_text.hide()
+        self.error_label.hide()
+
+        split_page = self.page_input.value()
+        stem = Path(self.input_path).stem
+        parent = os.path.dirname(self.input_path)
+
+        try:
+            reader = PdfReader(self.input_path)
+
+            writer1 = PdfWriter()
+            for i in range(split_page):
+                writer1.add_page(reader.pages[i])
+
+            writer2 = PdfWriter()
+            for i in range(split_page, len(reader.pages)):
+                writer2.add_page(reader.pages[i])
+
+            path1 = os.path.join(parent, f"{stem} - Part 1.pdf")
+            path2 = os.path.join(parent, f"{stem} - Part 2.pdf")
+
+            with open(path1, "wb") as f:
+                writer1.write(f)
+            with open(path2, "wb") as f:
+                writer2.write(f)
+
+            self.result_icon.setText("\u2705")
+            self.result_icon.show()
+            self.result_text.setText(
+                f"Split into:\n{os.path.basename(path1)} (pages 1–{split_page})\n"
+                f"{os.path.basename(path2)} (pages {split_page + 1}–{self.total_pages})"
+            )
+            self.result_text.show()
+        except Exception:
+            self.error_label.setText(
+                "Something went wrong — please try again or contact your IT team.")
+            self.error_label.show()
+
+        self.split_btn.setEnabled(True)
+
+
+# ---------------------------------------------------------------------------
 # Flatten tab
 # ---------------------------------------------------------------------------
 
@@ -2342,7 +2688,7 @@ class MainWindow(QMainWindow):
         all_tabs = [
             (CompressTab(self.gs_exe), "Compress"),
             (MergeTab(self.gs_exe), "Merge"),
-            (RenameTab(), "Rename"),
+            (SplitTab(), "Split"),
             (RedactTab(), "Redact"),
             (FlattenTab(), "Flatten"),
             (OCRTab(), "OCR"),
