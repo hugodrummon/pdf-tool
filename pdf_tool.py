@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.20"
+APP_VERSION = "1.5.21"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -446,7 +446,7 @@ class UpdateBanner(QFrame):
         self.progress.setMaximumHeight(14)
         banner_layout.addWidget(self.progress)
 
-        self.restart_btn = QPushButton("Restart to update")
+        self.restart_btn = QPushButton("Install and close")
         self.restart_btn.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self.restart_btn.setStyleSheet(
             "QPushButton { background-color: #4CAF50; color: white; border: none; "
@@ -481,18 +481,9 @@ class UpdateBanner(QFrame):
 
     def _do_restart_update(self):
         self.restart_btn.setEnabled(False)
-        self.status_label.setText("Restarting...")
+        self.status_label.setText("Installing update...")
 
-        # Find the path to the current app executable and its install dir
-        if getattr(sys, 'frozen', False):
-            app_exe = sys.executable
-            mei_dir = getattr(sys, '_MEIPASS', '')
-        else:
-            app_exe = os.path.abspath(sys.argv[0])
-            mei_dir = ''
-
-        # Use a plain tempfile dir (NOT tracked) so atexit doesn't delete the
-        # batch script while it's still running.
+        # Create a batch script that waits for the app to close, then runs the installer
         bat_dir = tempfile.mkdtemp()
         bat_path = os.path.join(bat_dir, "update.bat")
         with open(bat_path, "w") as f:
@@ -503,25 +494,9 @@ class UpdateBanner(QFrame):
             f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
             f.write(f'  goto waitloop\n')
             f.write(f')\n')
-            # Wait for THIS process's _MEI folder to be released
-            if mei_dir:
-                f.write(f':waitmei\n')
-                f.write(f'if exist "{mei_dir}" (\n')
-                f.write(f'  ping 127.0.0.1 -n 3 > nul\n')
-                f.write(f'  goto waitmei\n')
-                f.write(f')\n')
             f.write(f'ping 127.0.0.1 -n 3 > nul\n')
             # Run the installer silently
             f.write(f'"{self.installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\n')
-            # Wait for installer to fully finish writing files
-            f.write(f':waitinstall\n')
-            f.write(f'tasklist /FI "IMAGENAME eq Install PDF Tool.exe" 2>nul | find /I "Install" >nul && (\n')
-            f.write(f'  ping 127.0.0.1 -n 2 > nul\n')
-            f.write(f'  goto waitinstall\n')
-            f.write(f')\n')
-            f.write(f'ping 127.0.0.1 -n 5 > nul\n')
-            # Relaunch the app
-            f.write(f'start "" "{app_exe}"\n')
             # Clean up this batch script
             f.write(f'del "%~f0"\n')
 
