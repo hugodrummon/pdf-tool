@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.34"
+APP_VERSION = "1.5.35"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -323,6 +323,31 @@ def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str,
     return result.returncode == 0
 
 
+def rasterize_pdf(input_path: str, output_path: str, target_bytes: int) -> bool:
+    """Last resort: render each page as a grayscale JPEG image and rebuild the PDF.
+    Progressively lowers quality until under target size. Destroys editability."""
+    try:
+        doc = fitz.open(input_path)
+
+        for dpi, jpeg_quality in [(100, 60), (72, 50), (50, 40), (36, 30)]:
+            out_doc = fitz.open()
+            for page in doc:
+                pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
+                img_data = pix.tobytes(output="jpeg", jpg_quality=jpeg_quality)
+                rect = page.rect
+                out_page = out_doc.new_page(width=rect.width, height=rect.height)
+                out_page.insert_image(rect, stream=img_data)
+            out_doc.save(output_path, deflate=True, garbage=4)
+            out_doc.close()
+            if os.path.getsize(output_path) <= target_bytes:
+                doc.close()
+                return True
+        doc.close()
+        return os.path.isfile(output_path)
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Quality levels to try (best quality first, increasingly aggressive)
 # ---------------------------------------------------------------------------
@@ -386,6 +411,14 @@ class CompressWorker(QThread):
                         if best_size <= TARGET_SIZE_BYTES:
                             break
                 new_size = best_size
+            # Last resort: rasterize pages as JPEG images
+            if new_size > TARGET_SIZE_BYTES:
+                raster_path = os.path.join(tmp_dir, "rasterized.pdf")
+                if rasterize_pdf(self.input_path, raster_path, TARGET_SIZE_BYTES):
+                    raster_size = os.path.getsize(raster_path)
+                    if raster_size < new_size:
+                        shutil.copy2(raster_path, output_path)
+                        new_size = raster_size
             self.finished.emit(True, output_path, orig_size, new_size)
         else:
             self.finished.emit(False, "", orig_size, 0)
@@ -453,6 +486,14 @@ class MergeWorker(QThread):
                         if best_size <= TARGET_SIZE_BYTES:
                             break
                 new_size = best_size
+            # Last resort: rasterize pages as JPEG images
+            if new_size > TARGET_SIZE_BYTES:
+                raster_path = os.path.join(tmp_dir, "rasterized.pdf")
+                if rasterize_pdf(merged_path, raster_path, TARGET_SIZE_BYTES):
+                    raster_size = os.path.getsize(raster_path)
+                    if raster_size < new_size:
+                        shutil.copy2(raster_path, compressed_path)
+                        new_size = raster_size
             self.finished.emit(True, compressed_path, combined_size, new_size)
         else:
             self.finished.emit(True, merged_path, combined_size, merged_size)
@@ -1105,6 +1146,12 @@ class CompressTab(QWidget):
             self.size_warning.setText(
                 f"Note: The compressed file is {human_size(new_size)}, still over {TARGET_SIZE_MB} MB.\n"
                 "The original PDF may contain high-resolution scans.")
+            self.size_warning.show()
+        elif orig_size > TARGET_SIZE_BYTES * 5 and new_size <= TARGET_SIZE_BYTES:
+            self.size_warning.setText(
+                "Note: Image quality has been reduced to meet the 10 MB limit.\n"
+                "Text is still readable but images may appear lower quality.")
+            self.size_warning.setStyleSheet("color: #e67e00; font-weight: bold;")
             self.size_warning.show()
 
         self.name_input.setText(Path(self.input_path).stem + " - Compressed")
