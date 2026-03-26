@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -2167,6 +2167,98 @@ class OCRToolPanel(_ToolPanelBase):
 # Main window — three-panel layout
 # ---------------------------------------------------------------------------
 
+class LandingDropZone(QFrame):
+    """Full-screen landing drop zone shown before any file is loaded."""
+    files_dropped = pyqtSignal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+        self.setStyleSheet("background: #1c1c1e;")
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(16)
+
+        icon = QLabel("\U0001F4C4")
+        icon.setAlignment(Qt.AlignCenter)
+        icon.setStyleSheet("font-size: 48px; background: transparent;")
+        layout.addWidget(icon)
+
+        title = QLabel("Open a PDF to get started")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #f2f2f7; font-size: 18px; font-weight: 500; background: transparent;")
+        layout.addWidget(title)
+
+        sub = QLabel("Drag and drop a PDF or image file here, or click Browse")
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setStyleSheet("color: #636366; font-size: 13px; background: transparent;")
+        layout.addWidget(sub)
+
+        browse_btn = QPushButton("Browse Files")
+        browse_btn.setFixedWidth(160)
+        browse_btn.setStyleSheet(BTN_PRIMARY)
+        browse_btn.setCursor(Qt.PointingHandCursor)
+        browse_btn.clicked.connect(self._browse)
+        layout.addWidget(browse_btn, alignment=Qt.AlignCenter)
+
+    def _browse(self):
+        exts = " ".join(f"*{e}" for e in [".pdf"] + IMAGE_EXTENSIONS)
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select files", "", f"PDF/Image Files ({exts})")
+        if paths:
+            self.files_dropped.emit(paths)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = []
+        valid_exts = [".pdf"] + IMAGE_EXTENSIONS
+        for url in event.mimeData().urls():
+            p = url.toLocalFile()
+            if os.path.isfile(p) and os.path.splitext(p)[1].lower() in valid_exts:
+                paths.append(p)
+        if paths:
+            self.files_dropped.emit(paths)
+
+
+class FileInfoBar(QFrame):
+    """Persistent bar showing current file info."""
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(32)
+        self.setStyleSheet(
+            "QFrame { background: #252527; border-bottom: 1px solid #3a3a3c; }")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(16)
+
+        self._name_label = QLabel("")
+        self._name_label.setStyleSheet("color: #f2f2f7; font-size: 12px; font-weight: 500; background: transparent;")
+        layout.addWidget(self._name_label)
+
+        self._pages_label = QLabel("")
+        self._pages_label.setStyleSheet("color: #aeaeb2; font-size: 11px; background: transparent;")
+        layout.addWidget(self._pages_label)
+
+        self._size_label = QLabel("")
+        self._size_label.setStyleSheet("color: #aeaeb2; font-size: 11px; background: transparent;")
+        layout.addWidget(self._size_label)
+
+        layout.addStretch()
+
+    def update_info(self, name="", pages=0, size_bytes=0):
+        self._name_label.setText(name)
+        self._pages_label.setText(f"{pages} pages" if pages else "")
+        self._size_label.setText(human_size(size_bytes) if size_bytes else "")
+
+
+# Operations that show the thumbnail panel
+_THUMB_OPERATIONS = {"Split", "Redact"}
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2175,6 +2267,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1000, 700)
 
         self.gs_exe = find_ghostscript()
+        self._current_pdf = ""
+        self._file_loaded = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -2188,35 +2282,56 @@ class MainWindow(QMainWindow):
         self._banner_container.setContentsMargins(8, 4, 8, 0)
         main_layout.addLayout(self._banner_container)
 
-        # Tab bar
-        self._tab_bar = QFrame()
-        self._tab_bar.setFixedHeight(48)
-        self._tab_bar.setStyleSheet(
+        # Error banner for missing dependencies (shown as top-of-screen banner)
+        self._error_banner = QFrame()
+        self._error_banner.setStyleSheet(
+            "QFrame { background: #3b1818; border-bottom: 1px solid #ef4444; }")
+        eb_layout = QHBoxLayout(self._error_banner)
+        eb_layout.setContentsMargins(12, 8, 12, 8)
+        self._error_banner_label = QLabel("")
+        self._error_banner_label.setWordWrap(True)
+        self._error_banner_label.setStyleSheet("color: #fca5a5; font-size: 12px; background: transparent;")
+        eb_layout.addWidget(self._error_banner_label)
+        self._error_banner.hide()
+        main_layout.addWidget(self._error_banner)
+
+        if not self.gs_exe:
+            self._error_banner_label.setText(
+                "\u26A0  Ghostscript was not found. Compression and merge will not work. "
+                "Please ask your IT team to install Ghostscript.")
+            self._error_banner.show()
+
+        # Operation toolbar (hidden until file loaded)
+        self._toolbar = QFrame()
+        self._toolbar.setFixedHeight(48)
+        self._toolbar.setStyleSheet(
             "QFrame { background: #141416; border-bottom: 1px solid #3a3a3c; }")
-        tb_layout = QHBoxLayout(self._tab_bar)
+        self._toolbar.hide()
+        tb_layout = QHBoxLayout(self._toolbar)
         tb_layout.setContentsMargins(8, 0, 8, 0)
         tb_layout.setSpacing(0)
 
-        self._tab_buttons = []
+        self._op_buttons = []
+        self._op_labels = []  # store labels for conditional thumbnail lookup
         self._panel_stack = QStackedWidget()
         self._panel_stack.setFixedWidth(236)
         self._panel_stack.setStyleSheet("background: #252527;")
 
-        all_tabs = [
-            ("Compress", CompressToolPanel(self.gs_exe, self)),
-            ("Merge", MergeToolPanel(self.gs_exe, self)),
-            ("Split", SplitToolPanel(self)),
-            ("Flatten", FlattenToolPanel(self)),
-            ("OCR", OCRToolPanel(self)),
-            ("Redact", RedactToolPanel(self)),
+        all_ops = [
+            ("Compress", "\u2B07", CompressToolPanel(self.gs_exe, self)),
+            ("Merge", "\u2795", MergeToolPanel(self.gs_exe, self)),
+            ("Split", "\u2702", SplitToolPanel(self)),
+            ("Flatten", "\u25A3", FlattenToolPanel(self)),
+            ("OCR", "\U0001F50D", OCRToolPanel(self)),
+            ("Redact", "\u2588", RedactToolPanel(self)),
         ]
 
-        tab_idx = 0
-        for label, panel in all_tabs:
+        op_idx = 0
+        for label, icon, panel in all_ops:
             if ENABLED_TABS is not None and label not in ENABLED_TABS:
                 continue
 
-            btn = QPushButton(label)
+            btn = QPushButton(f" {icon}  {label}")
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
@@ -2224,37 +2339,48 @@ class MainWindow(QMainWindow):
                 "color: #636366; font-size: 13px; padding: 0 16px; min-height: 46px; }"
                 "QPushButton:hover { color: #aeaeb2; }"
                 "QPushButton:checked { color: #f2f2f7; border-bottom-color: #3b82f6; font-weight: 500; }")
-            idx = tab_idx
-            btn.clicked.connect(lambda checked, i=idx: self._switch_tab(i))
+            idx = op_idx
+            btn.clicked.connect(lambda checked, i=idx: self._switch_op(i))
             tb_layout.addWidget(btn)
-            self._tab_buttons.append(btn)
+            self._op_buttons.append(btn)
+            self._op_labels.append(label)
 
-            # Wrap panel in scroll area
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.NoFrame)
             scroll.setStyleSheet("QScrollArea { background: #252527; border: none; }")
             scroll.setWidget(panel)
             self._panel_stack.addWidget(scroll)
-            tab_idx += 1
+            op_idx += 1
 
         tb_layout.addStretch()
-        main_layout.addWidget(self._tab_bar)
+        main_layout.addWidget(self._toolbar)
 
-        # Body: three panels
-        body = QHBoxLayout()
+        # File info bar (hidden until file loaded)
+        self._file_info_bar = FileInfoBar()
+        self._file_info_bar.hide()
+        main_layout.addWidget(self._file_info_bar)
+
+        # Landing drop zone (visible when no file loaded)
+        self._landing = LandingDropZone()
+        self._landing.files_dropped.connect(self._on_landing_drop)
+        main_layout.addWidget(self._landing, 1)
+
+        # Body: three-panel layout (hidden until file loaded)
+        self._body_widget = QWidget()
+        self._body_widget.hide()
+        body = QHBoxLayout(self._body_widget)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
-        # Left: thumbnails
+        # Left: thumbnails (conditionally shown)
         self._thumb_panel = ThumbnailPanel()
         body.addWidget(self._thumb_panel)
 
-        # Separator
-        sep_left = QFrame()
-        sep_left.setFixedWidth(1)
-        sep_left.setStyleSheet("background: #3a3a3c;")
-        body.addWidget(sep_left)
+        self._sep_left = QFrame()
+        self._sep_left.setFixedWidth(1)
+        self._sep_left.setStyleSheet("background: #3a3a3c;")
+        body.addWidget(self._sep_left)
 
         # Center: viewer
         self._viewer = PdfViewer()
@@ -2268,40 +2394,77 @@ class MainWindow(QMainWindow):
         sep_right.setStyleSheet("background: #3a3a3c;")
         body.addWidget(sep_right)
 
-        # Right: tool panels
+        # Right: operation panels
         body.addWidget(self._panel_stack)
 
-        main_layout.addLayout(body)
-
-        # Select first tab
-        if self._tab_buttons:
-            self._switch_tab(0)
-
-        # Ghostscript warning
-        if not self.gs_exe:
-            warn = QLabel(
-                "\u26A0 Ghostscript was not found. Compression and merge will not work.\n"
-                "Please ask your IT team to install Ghostscript.")
-            warn.setWordWrap(True)
-            warn.setStyleSheet(
-                "color: #f59e0b; font-size: 11px; padding: 8px 12px; "
-                "background: #252527; border-top: 1px solid #3a3a3c;")
-            main_layout.addWidget(warn)
+        main_layout.addWidget(self._body_widget, 1)
 
         # Check for updates
         self._update_checker = UpdateChecker()
         self._update_checker.update_available.connect(self._on_update_available)
         self._update_checker.start()
 
-    def _switch_tab(self, index):
-        for i, btn in enumerate(self._tab_buttons):
+    def _on_landing_drop(self, paths):
+        """Handle file drop on landing screen — load first file and show workspace."""
+        if not paths:
+            return
+        self._show_workspace()
+        path = paths[0]
+        if path.lower().endswith(".pdf"):
+            self.load_pdf(path)
+        # If multiple PDFs dropped, auto-select Merge and populate
+        if len(paths) > 1 and all(p.lower().endswith(".pdf") for p in paths):
+            for i, lbl in enumerate(self._op_labels):
+                if lbl == "Merge":
+                    self._switch_op(i)
+                    panel = self._panel_stack.widget(i).widget()
+                    if hasattr(panel, '_on_files_dropped'):
+                        panel._on_files_dropped(paths)
+                    break
+        elif self._op_buttons:
+            self._switch_op(0)
+
+    def _show_workspace(self):
+        """Transition from landing to three-panel workspace."""
+        if self._file_loaded:
+            return
+        self._file_loaded = True
+        self._landing.hide()
+        self._toolbar.show()
+        self._file_info_bar.show()
+        self._body_widget.show()
+
+    def _switch_op(self, index):
+        for i, btn in enumerate(self._op_buttons):
             btn.setChecked(i == index)
         self._panel_stack.setCurrentIndex(index)
 
+        # Show/hide thumbnail panel based on operation
+        label = self._op_labels[index] if index < len(self._op_labels) else ""
+        show_thumbs = label in _THUMB_OPERATIONS
+        self._thumb_panel.setVisible(show_thumbs)
+        self._sep_left.setVisible(show_thumbs)
+
     def load_pdf(self, path):
-        if os.path.isfile(path) and path.lower().endswith(".pdf"):
-            self._viewer.load_pdf(path)
-            self._thumb_panel.load_pdf(path)
+        if not os.path.isfile(path) or not path.lower().endswith(".pdf"):
+            return
+        self._current_pdf = path
+        if not self._file_loaded:
+            self._show_workspace()
+            if self._op_buttons:
+                self._switch_op(0)
+
+        self._viewer.load_pdf(path)
+        self._thumb_panel.load_pdf(path)
+
+        # Update file info bar
+        try:
+            reader = PdfReader(path)
+            pages = len(reader.pages)
+        except Exception:
+            pages = self._viewer.get_total_pages()
+        size = os.path.getsize(path)
+        self._file_info_bar.update_info(Path(path).name, pages, size)
 
     def _on_page_changed(self, current, total):
         self._thumb_panel.set_current_page(current)
