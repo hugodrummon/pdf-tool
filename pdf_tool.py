@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.37"
+APP_VERSION = "1.5.38"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -692,10 +692,15 @@ class UpdateBanner(QFrame):
         self.restart_btn.setEnabled(False)
         self.status_label.setText("Closing and installing update...")
 
-        # Launch the installer directly — Inno Setup's /CLOSEAPPLICATIONS
-        # will handle closing this app and waiting for file locks to release.
+        # Figure out where the app is installed so we can relaunch after update
+        app_exe = sys.executable
+
+        # Run installer silently, wait for it to finish, then relaunch the app.
+        # Uses cmd /c to chain: installer runs → waits → launches updated exe.
         subprocess.Popen(
-            [self.installer_path, "/SILENT", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS"],
+            f'cmd /c ""{self.installer_path}" /SILENT /CLOSEAPPLICATIONS'
+            f' /FORCECLOSEAPPLICATIONS && start "" "{app_exe}""',
+            shell=True,
         )
 
         QApplication.instance().quit()
