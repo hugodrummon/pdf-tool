@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -2255,9 +2255,6 @@ class FileInfoBar(QFrame):
         self._size_label.setText(human_size(size_bytes) if size_bytes else "")
 
 
-# Operations that show the thumbnail panel
-_THUMB_OPERATIONS = {"Split", "Redact"}
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -2439,11 +2436,9 @@ class MainWindow(QMainWindow):
             btn.setChecked(i == index)
         self._panel_stack.setCurrentIndex(index)
 
-        # Show/hide thumbnail panel based on operation
-        label = self._op_labels[index] if index < len(self._op_labels) else ""
-        show_thumbs = label in _THUMB_OPERATIONS
-        self._thumb_panel.setVisible(show_thumbs)
-        self._sep_left.setVisible(show_thumbs)
+        # Thumbnail panel always visible for easier page navigation
+        self._thumb_panel.setVisible(True)
+        self._sep_left.setVisible(True)
 
     def load_pdf(self, path):
         if not os.path.isfile(path) or not path.lower().endswith(".pdf"):
