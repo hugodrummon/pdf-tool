@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.35"
+APP_VERSION = "1.5.36"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -419,6 +419,18 @@ class CompressWorker(QThread):
                     if raster_size < new_size:
                         shutil.copy2(raster_path, output_path)
                         new_size = raster_size
+            # Re-compress output — a second pass often shrinks further
+            if new_size > TARGET_SIZE_BYTES:
+                for _pass in range(2):
+                    repass_path = os.path.join(tmp_dir, f"repass{_pass}.pdf")
+                    ok_r = compress_pdf(output_path, repass_path, self.gs_exe, "/screen")
+                    if ok_r and os.path.isfile(repass_path):
+                        repass_size = os.path.getsize(repass_path)
+                        if repass_size < new_size:
+                            shutil.copy2(repass_path, output_path)
+                            new_size = repass_size
+                        if new_size <= TARGET_SIZE_BYTES:
+                            break
             self.finished.emit(True, output_path, orig_size, new_size)
         else:
             self.finished.emit(False, "", orig_size, 0)
@@ -494,6 +506,18 @@ class MergeWorker(QThread):
                     if raster_size < new_size:
                         shutil.copy2(raster_path, compressed_path)
                         new_size = raster_size
+            # Re-compress output — a second pass often shrinks further
+            if new_size > TARGET_SIZE_BYTES:
+                for _pass in range(2):
+                    repass_path = os.path.join(tmp_dir, f"repass{_pass}.pdf")
+                    ok_r = compress_pdf(compressed_path, repass_path, self.gs_exe, "/screen")
+                    if ok_r and os.path.isfile(repass_path):
+                        repass_size = os.path.getsize(repass_path)
+                        if repass_size < new_size:
+                            shutil.copy2(repass_path, compressed_path)
+                            new_size = repass_size
+                        if new_size <= TARGET_SIZE_BYTES:
+                            break
             self.finished.emit(True, compressed_path, combined_size, new_size)
         else:
             self.finished.emit(True, merged_path, combined_size, merged_size)
