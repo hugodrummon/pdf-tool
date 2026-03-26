@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "1.5.36"
+APP_VERSION = "1.5.37"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -325,11 +325,12 @@ def compress_pdf_aggressive(input_path: str, output_path: str, gs_exe: str,
 
 def rasterize_pdf(input_path: str, output_path: str, target_bytes: int) -> bool:
     """Last resort: render each page as a grayscale JPEG image and rebuild the PDF.
-    Progressively lowers quality until under target size. Destroys editability."""
+    Progressively lowers quality until under target size. Destroys editability.
+    Minimum 72 DPI / 50% JPEG to keep text readable."""
     try:
         doc = fitz.open(input_path)
 
-        for dpi, jpeg_quality in [(100, 60), (72, 50), (50, 40), (36, 30)]:
+        for dpi, jpeg_quality in [(150, 70), (100, 60), (72, 50)]:
             out_doc = fitz.open()
             for page in doc:
                 pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
@@ -343,7 +344,10 @@ def rasterize_pdf(input_path: str, output_path: str, target_bytes: int) -> bool:
                 doc.close()
                 return True
         doc.close()
-        return os.path.isfile(output_path)
+        # Only return the file if rasterizing actually reduced size vs input
+        if os.path.isfile(output_path):
+            return os.path.getsize(output_path) < os.path.getsize(input_path)
+        return False
     except Exception:
         return False
 
