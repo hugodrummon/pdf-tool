@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.2.5"
+APP_VERSION = "2.2.6"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -110,7 +110,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QSize, QTimer
 from PyQt5.QtGui import QFont, QColor, QPalette, QIcon, QDragEnterEvent, QDropEvent, QPixmap, QImage
-from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+
 
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 import fitz  # PyMuPDF — for redaction and flattening
@@ -1097,18 +1097,9 @@ class ThumbnailPanel(QWidget):
         self.clear()
         try:
             self._doc = fitz.open(pdf_path)
-            for i in range(len(self._doc)):
-                page = self._doc[i]
-                pix = page.get_pixmap(dpi=72)
-                # Scale to fit 60px width
-                scale = 60.0 / pix.width if pix.width > 0 else 1
-                w = int(pix.width * scale)
-                h = int(pix.height * scale)
-                img = QImage(pix.samples, pix.width, pix.height,
-                             pix.stride, QImage.Format_RGB888)
-                pixmap = QPixmap.fromImage(img).scaled(
-                    w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
+            self._total = len(self._doc)
+            # Create placeholder labels for all pages, render in batches
+            for i in range(self._total):
                 frame = QFrame()
                 frame.setStyleSheet("background: transparent;")
                 frame.setCursor(Qt.PointingHandCursor)
@@ -1118,11 +1109,11 @@ class ThumbnailPanel(QWidget):
                 fl.setAlignment(Qt.AlignCenter)
 
                 thumb_label = QLabel()
-                thumb_label.setPixmap(pixmap)
+                thumb_label.setFixedSize(60, 80)
                 thumb_label.setAlignment(Qt.AlignCenter)
                 thumb_label.setStyleSheet(
                     "border: 1.5px solid #48484a; border-radius: 2px; "
-                    "background: #f0ede8; padding: 1px;")
+                    "background: #3a3a3c; padding: 1px;")
                 fl.addWidget(thumb_label)
 
                 num_label = QLabel(str(i + 1))
@@ -1137,8 +1128,35 @@ class ThumbnailPanel(QWidget):
 
             if self._thumbnails:
                 self.set_current_page(1)
+            # Render thumbnails in background batches
+            self._pending_thumbs = list(range(self._total))
+            QTimer.singleShot(100, self._render_thumb_batch)
         except Exception:
             pass
+
+    def _render_thumb_batch(self):
+        """Render a few thumbnails at a time to avoid blocking UI."""
+        if not self._pending_thumbs or not self._doc:
+            return
+        batch = self._pending_thumbs[:5]
+        self._pending_thumbs = self._pending_thumbs[5:]
+        for i in batch:
+            if i >= len(self._thumbnails):
+                break
+            page = self._doc[i]
+            pix = page.get_pixmap(dpi=36)  # very low DPI for tiny thumbs
+            scale = 60.0 / pix.width if pix.width > 0 else 1
+            w = int(pix.width * scale)
+            h = int(pix.height * scale)
+            img = QImage(pix.samples, pix.width, pix.height,
+                         pix.stride, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(img).scaled(
+                w, h, Qt.KeepAspectRatio, Qt.FastTransformation)
+            _, thumb_label, _ = self._thumbnails[i]
+            thumb_label.setPixmap(pixmap)
+            thumb_label.setFixedSize(w, h)
+        if self._pending_thumbs:
+            QTimer.singleShot(0, self._render_thumb_batch)
 
     def set_current_page(self, page_num):
         idx = page_num - 1
@@ -1159,6 +1177,7 @@ class ThumbnailPanel(QWidget):
     def clear(self):
         self._thumbnails = []
         self._current = -1
+        self._pending_thumbs = []
         if self._doc:
             self._doc.close()
             self._doc = None
@@ -1341,12 +1360,9 @@ class PdfViewer(QWidget):
         pixmap = QPixmap.fromImage(img)
 
         frame = QFrame()
-        frame.setStyleSheet("QFrame { background: white; border-radius: 2px; }")
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 128))
-        frame.setGraphicsEffect(shadow)
+        frame.setStyleSheet(
+            "QFrame { background: white; border-radius: 2px; "
+            "border: 1px solid #3a3a3c; }")
 
         fl = QVBoxLayout(frame)
         fl.setContentsMargins(0, 0, 0, 0)
