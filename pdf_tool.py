@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.1.5"
+APP_VERSION = "2.1.6"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -697,6 +697,7 @@ class UpdateBanner(QFrame):
         with open(bat_path, "w") as bat:
             bat.write("@echo off\r\n")
             bat.write(f'"{self.installer_path}" /SILENT /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\r\n')
+            bat.write("timeout /t 2 /nobreak >nul\r\n")  # wait for old process to release _MEI folder
             bat.write(f'start "" "{app_exe}"\r\n')
             bat.write('del "%~f0"\r\n')  # self-delete
         subprocess.Popen(
