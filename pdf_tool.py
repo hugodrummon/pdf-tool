@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.2.4"
+APP_VERSION = "2.2.5"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -1314,7 +1314,7 @@ class PdfViewer(QWidget):
             self._page_label.setText("Failed to load PDF")
 
     def _initial_render(self):
-        """Calculate fit-to-width zoom then render all pages once."""
+        """Calculate fit-to-width zoom then render pages."""
         if not self._doc or self._total_pages == 0:
             return
         page = self._doc[0]
@@ -1332,8 +1332,33 @@ class PdfViewer(QWidget):
         self._zoom_label.setText(f"{int(self._zoom * 100)}%")
         self._render_all()
 
+    def _render_page(self, i, mat):
+        """Render a single page and return its frame widget."""
+        page = self._doc[i]
+        pix = page.get_pixmap(matrix=mat)
+        img = QImage(pix.samples, pix.width, pix.height, pix.stride,
+                     QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(img)
+
+        frame = QFrame()
+        frame.setStyleSheet("QFrame { background: white; border-radius: 2px; }")
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 128))
+        frame.setGraphicsEffect(shadow)
+
+        fl = QVBoxLayout(frame)
+        fl.setContentsMargins(0, 0, 0, 0)
+        label = QLabel()
+        label.setPixmap(pixmap)
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet("background: white;")
+        fl.addWidget(label)
+        return frame
+
     def _render_all(self):
-        """Render all pages at current zoom — simple and fast."""
+        """Render first 3 pages instantly, rest in background batches."""
         for w in self._page_widgets:
             w.deleteLater()
         self._page_widgets = []
@@ -1343,33 +1368,37 @@ class PdfViewer(QWidget):
         mat = fitz.Matrix(self._dpi * self._zoom / 72.0, self._dpi * self._zoom / 72.0)
         mat = mat.prerotate(self._rotation)
 
-        for i in range(self._total_pages):
-            page = self._doc[i]
-            pix = page.get_pixmap(matrix=mat)
-            img = QImage(pix.samples, pix.width, pix.height, pix.stride,
-                         QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(img)
-
-            frame = QFrame()
-            frame.setStyleSheet("QFrame { background: white; border-radius: 2px; }")
-            shadow = QGraphicsDropShadowEffect()
-            shadow.setBlurRadius(20)
-            shadow.setOffset(0, 4)
-            shadow.setColor(QColor(0, 0, 0, 128))
-            frame.setGraphicsEffect(shadow)
-
-            fl = QVBoxLayout(frame)
-            fl.setContentsMargins(0, 0, 0, 0)
-            label = QLabel()
-            label.setPixmap(pixmap)
-            label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet("background: white;")
-            fl.addWidget(label)
-
+        # Render first 3 pages immediately for instant feedback
+        first_batch = min(3, self._total_pages)
+        for i in range(first_batch):
+            frame = self._render_page(i, mat)
             self._pages_layout.addWidget(frame)
             self._page_widgets.append(frame)
 
+        # Queue remaining pages in small batches
+        if self._total_pages > first_batch:
+            self._pending_pages = list(range(first_batch, self._total_pages))
+            self._pending_mat = mat
+            QTimer.singleShot(0, self._render_next_batch)
+
+    def _render_next_batch(self):
+        """Render next batch of pages without blocking the UI."""
+        if not hasattr(self, '_pending_pages') or not self._pending_pages or not self._doc:
+            return
+        batch_size = 3
+        batch = self._pending_pages[:batch_size]
+        self._pending_pages = self._pending_pages[batch_size:]
+
+        for i in batch:
+            frame = self._render_page(i, self._pending_mat)
+            self._pages_layout.addWidget(frame)
+            self._page_widgets.append(frame)
+
+        if self._pending_pages:
+            QTimer.singleShot(0, self._render_next_batch)
+
     def _clear(self):
+        self._pending_pages = []  # cancel any background rendering
         for w in self._page_widgets:
             w.deleteLater()
         self._page_widgets = []
