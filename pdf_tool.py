@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.1.3"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -1273,7 +1273,7 @@ class PdfViewer(QWidget):
             self._doc = fitz.open(pdf_path)
             self._total_pages = len(self._doc)
             self._drop_zone_label.hide()
-            self._render_pages()
+            self._fit_page()  # auto-fit to viewport width on load
             self._page_label.setText(f"Page 1 of {self._total_pages}")
             self.page_changed.emit(1, self._total_pages)
         except Exception:
@@ -1347,8 +1347,26 @@ class PdfViewer(QWidget):
         self._render_pages()
 
     def _fit_page(self):
-        self._zoom = 1.0
-        self._zoom_label.setText("100%")
+        """Fit page width to available viewport width."""
+        if not self._doc or self._total_pages == 0:
+            return
+        page = self._doc[0]
+        if self._rotation in (90, 270):
+            page_width_pts = page.rect.height
+        else:
+            page_width_pts = page.rect.width
+        # Available width = scroll area width minus padding (24 each side) minus scrollbar
+        available = self._scroll.viewport().width() - 48 - 20
+        if available < 100:
+            available = 400
+        # page_width at zoom=1.0 is page_width_pts * dpi / 72
+        base_pixel_width = page_width_pts * self._dpi / 72.0
+        if base_pixel_width > 0:
+            self._zoom = available / base_pixel_width
+            self._zoom = max(0.25, min(self._zoom, 3.0))
+        else:
+            self._zoom = 1.0
+        self._zoom_label.setText(f"{int(self._zoom * 100)}%")
         self._render_pages()
 
     def _prev_page(self):
@@ -1381,6 +1399,12 @@ class PdfViewer(QWidget):
         idx = page_num - 1
         if 0 <= idx < len(self._page_widgets):
             self._scroll.ensureWidgetVisible(self._page_widgets[idx])
+
+    def resizeEvent(self, event):
+        """Re-fit pages when viewer is resized."""
+        super().resizeEvent(event)
+        if self._doc and self._total_pages > 0:
+            self._fit_page()
 
     def get_total_pages(self):
         return self._total_pages
