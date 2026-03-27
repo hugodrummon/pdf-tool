@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.1.6"
+APP_VERSION = "2.2.0"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -975,20 +975,30 @@ class CompactDropZone(QFrame):
         self._extensions = [e.lower() for e in (file_extensions or [".pdf"])]
         self._filter_name = file_filter_name
         self.setAcceptDrops(True)
-        self.setFixedHeight(64)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumHeight(120)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(
-            "CompactDropZone { background: #252527; border: 1.5px dashed #3a3a3c; "
-            "border-radius: 8px; }"
-            "CompactDropZone:hover { border-color: #3b82f6; background: #2a2a2c; }")
+            "CompactDropZone { background: #1e1e20; border: 2px dashed #48484a; "
+            "border-radius: 10px; }"
+            "CompactDropZone:hover { border-color: #3b82f6; background: #22222a; }")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(2)
+        layout.setContentsMargins(16, 24, 16, 24)
+        layout.setSpacing(8)
         layout.setAlignment(Qt.AlignCenter)
+        file_icon = QLabel("\U0001F4C4")
+        file_icon.setAlignment(Qt.AlignCenter)
+        file_icon.setStyleSheet("font-size: 32px; border: none; background: transparent;")
+        layout.addWidget(file_icon)
         self._label = QLabel(label_text)
         self._label.setAlignment(Qt.AlignCenter)
-        self._label.setStyleSheet("color: #aeaeb2; font-size: 11px; border: none; background: transparent;")
+        self._label.setWordWrap(True)
+        self._label.setStyleSheet("color: #d1d1d6; font-size: 13px; border: none; background: transparent;")
         layout.addWidget(self._label)
+        browse_hint = QLabel("or click to browse")
+        browse_hint.setAlignment(Qt.AlignCenter)
+        browse_hint.setStyleSheet("color: #636366; font-size: 11px; border: none; background: transparent;")
+        layout.addWidget(browse_hint)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1174,80 +1184,92 @@ class PdfViewer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Toolbar
+        # Floating pill toolbar
         toolbar = QFrame()
-        toolbar.setFixedHeight(40)
+        toolbar.setFixedHeight(44)
         toolbar.setStyleSheet(
-            "QFrame { background: #2c2c2e; border-bottom: 1px solid #3a3a3c; }")
+            "QFrame { background: #222224; border-bottom: 1px solid #3a3a3c; }")
         tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(12, 0, 12, 0)
-        tb_layout.setSpacing(4)
+        tb_layout.setContentsMargins(8, 4, 8, 4)
+        tb_layout.setSpacing(2)
 
-        btn_style = (
-            "QPushButton { background: none; border: none; color: #aeaeb2; "
-            "font-size: 14px; padding: 5px 8px; border-radius: 5px; }"
-            "QPushButton:hover { background: #3a3a3c; color: #f2f2f7; }"
-            "QPushButton:disabled { color: #48484a; }")
+        pill_style = (
+            "QPushButton { background: #2c2c2e; border: 1px solid #3a3a3c; color: #d1d1d6; "
+            "font-size: 13px; padding: 4px 10px; border-radius: 6px; }"
+            "QPushButton:hover { background: #3a3a3c; color: #ffffff; }"
+            "QPushButton:disabled { color: #48484a; border-color: #2c2c2e; }")
 
         self._prev_btn = QPushButton("\u25C0")
-        self._prev_btn.setStyleSheet(btn_style)
-        self._prev_btn.setFixedSize(30, 30)
+        self._prev_btn.setStyleSheet(pill_style)
+        self._prev_btn.setFixedSize(32, 32)
+        self._prev_btn.setToolTip("Previous page")
         self._prev_btn.clicked.connect(self._prev_page)
         tb_layout.addWidget(self._prev_btn)
 
         self._page_label = QLabel("No file loaded")
-        self._page_label.setStyleSheet("color: #aeaeb2; font-size: 12px; background: transparent;")
+        self._page_label.setStyleSheet("color: #d1d1d6; font-size: 12px; background: transparent;")
         self._page_label.setAlignment(Qt.AlignCenter)
-        self._page_label.setMinimumWidth(80)
+        self._page_label.setMinimumWidth(90)
         tb_layout.addWidget(self._page_label)
 
         self._next_btn = QPushButton("\u25B6")
-        self._next_btn.setStyleSheet(btn_style)
-        self._next_btn.setFixedSize(30, 30)
+        self._next_btn.setStyleSheet(pill_style)
+        self._next_btn.setFixedSize(32, 32)
+        self._next_btn.setToolTip("Next page")
         self._next_btn.clicked.connect(self._next_page)
         tb_layout.addWidget(self._next_btn)
 
-        sep1 = QFrame()
-        sep1.setFixedSize(1, 18)
-        sep1.setStyleSheet("background: #48484a;")
-        tb_layout.addWidget(sep1)
+        tb_layout.addSpacing(8)
+
+        # Zoom group in a pill container
+        zoom_pill = QFrame()
+        zoom_pill.setStyleSheet(
+            "QFrame { background: #2c2c2e; border: 1px solid #3a3a3c; border-radius: 8px; }")
+        zl = QHBoxLayout(zoom_pill)
+        zl.setContentsMargins(4, 2, 4, 2)
+        zl.setSpacing(0)
+
+        inner_btn = (
+            "QPushButton { background: none; border: none; color: #d1d1d6; "
+            "font-size: 14px; padding: 3px 8px; border-radius: 4px; }"
+            "QPushButton:hover { background: #48484a; color: #ffffff; }")
 
         self._zoom_out_btn = QPushButton("\u2212")
-        self._zoom_out_btn.setStyleSheet(btn_style)
-        self._zoom_out_btn.setFixedSize(30, 30)
+        self._zoom_out_btn.setStyleSheet(inner_btn)
+        self._zoom_out_btn.setFixedSize(28, 28)
+        self._zoom_out_btn.setToolTip("Zoom out")
         self._zoom_out_btn.clicked.connect(self._zoom_out)
-        tb_layout.addWidget(self._zoom_out_btn)
+        zl.addWidget(self._zoom_out_btn)
 
         self._zoom_label = QLabel("100%")
-        self._zoom_label.setStyleSheet("color: #aeaeb2; font-size: 12px; background: transparent;")
+        self._zoom_label.setStyleSheet("color: #d1d1d6; font-size: 11px; font-weight: 500; background: transparent;")
         self._zoom_label.setAlignment(Qt.AlignCenter)
-        self._zoom_label.setMinimumWidth(44)
-        tb_layout.addWidget(self._zoom_label)
+        self._zoom_label.setFixedWidth(44)
+        zl.addWidget(self._zoom_label)
 
         self._zoom_in_btn = QPushButton("+")
-        self._zoom_in_btn.setStyleSheet(btn_style)
-        self._zoom_in_btn.setFixedSize(30, 30)
+        self._zoom_in_btn.setStyleSheet(inner_btn)
+        self._zoom_in_btn.setFixedSize(28, 28)
+        self._zoom_in_btn.setToolTip("Zoom in")
         self._zoom_in_btn.clicked.connect(self._zoom_in)
-        tb_layout.addWidget(self._zoom_in_btn)
+        zl.addWidget(self._zoom_in_btn)
+        tb_layout.addWidget(zoom_pill)
 
-        sep2 = QFrame()
-        sep2.setFixedSize(1, 18)
-        sep2.setStyleSheet("background: #48484a;")
-        tb_layout.addWidget(sep2)
+        tb_layout.addSpacing(4)
 
-        self._rotate_btn = QPushButton("\u21BB")
-        self._rotate_btn.setStyleSheet(btn_style)
-        self._rotate_btn.setFixedSize(30, 30)
-        self._rotate_btn.setToolTip("Rotate")
-        self._rotate_btn.clicked.connect(self._rotate)
-        tb_layout.addWidget(self._rotate_btn)
-
-        self._fit_btn = QPushButton("\u2B1C")
-        self._fit_btn.setStyleSheet(btn_style)
-        self._fit_btn.setFixedSize(30, 30)
-        self._fit_btn.setToolTip("Fit page")
+        self._fit_btn = QPushButton("\u21F2")
+        self._fit_btn.setStyleSheet(pill_style)
+        self._fit_btn.setFixedSize(32, 32)
+        self._fit_btn.setToolTip("Fit to width")
         self._fit_btn.clicked.connect(self._fit_page)
         tb_layout.addWidget(self._fit_btn)
+
+        self._rotate_btn = QPushButton("\u21BB")
+        self._rotate_btn.setStyleSheet(pill_style)
+        self._rotate_btn.setFixedSize(32, 32)
+        self._rotate_btn.setToolTip("Rotate 90\u00B0")
+        self._rotate_btn.clicked.connect(self._rotate)
+        tb_layout.addWidget(self._rotate_btn)
 
         tb_layout.addStretch()
         layout.addWidget(toolbar)
@@ -1608,72 +1630,77 @@ class CompressToolPanel(_ToolPanelBase):
         self._is_image = False
         self.output_ext = ".pdf"
 
-        self._add_header("Compress")
-
         self._drop = CompactDropZone(
-            "Drop PDF or image here",
+            "Drop a PDF or image to compress",
             file_extensions=[".pdf"] + IMAGE_EXTENSIONS,
             file_filter_name="PDF/Image")
         self._drop.files_dropped.connect(self._on_file_dropped)
-        self._layout.addWidget(self._drop)
+        self._layout.addWidget(self._drop, 1)
 
         self._add_file_info()
 
-        # Quality slider for images
+        # Quality setting
         self._quality_frame = QFrame()
         self._quality_frame.setStyleSheet("background: transparent;")
         self._quality_frame.hide()
         ql = QVBoxLayout(self._quality_frame)
-        ql.setContentsMargins(0, 0, 0, 0)
-        ql.setSpacing(4)
-        ql_lbl = QLabel("Image quality")
-        ql_lbl.setStyleSheet("color: #aeaeb2; font-size: 11px; background: transparent;")
+        ql.setContentsMargins(0, 4, 0, 4)
+        ql.setSpacing(6)
+        ql_lbl = QLabel("Quality")
+        ql_lbl.setStyleSheet("color: #d1d1d6; font-size: 12px; font-weight: 500; background: transparent;")
         ql.addWidget(ql_lbl)
         row = QHBoxLayout()
         row.setSpacing(8)
+        low_lbl = QLabel("Small")
+        low_lbl.setStyleSheet("color: #636366; font-size: 10px; background: transparent;")
+        row.addWidget(low_lbl)
         self._quality_slider = QSlider(Qt.Horizontal)
         self._quality_slider.setRange(20, 95)
         self._quality_slider.setValue(75)
         self._quality_slider.valueChanged.connect(
             lambda v: self._quality_val.setText(f"{v}%"))
         row.addWidget(self._quality_slider)
+        high_lbl = QLabel("High")
+        high_lbl.setStyleSheet("color: #636366; font-size: 10px; background: transparent;")
+        row.addWidget(high_lbl)
         self._quality_val = QLabel("75%")
-        self._quality_val.setStyleSheet("color: #aeaeb2; font-size: 12px; background: transparent; min-width: 32px;")
+        self._quality_val.setStyleSheet("color: #aeaeb2; font-size: 11px; background: transparent; min-width: 32px;")
         self._quality_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         row.addWidget(self._quality_val)
         ql.addLayout(row)
         self._layout.addWidget(self._quality_frame)
 
-        self._compress_btn = QPushButton("Compress")
+        self._compress_btn = QPushButton("\u2B07  Compress Now")
+        self._compress_btn.setFixedHeight(40)
         self._compress_btn.setStyleSheet(BTN_PRIMARY)
         self._compress_btn.setCursor(Qt.PointingHandCursor)
         self._compress_btn.clicked.connect(self._start_compress)
-        self._compress_btn.hide()
+        self._compress_btn.setEnabled(False)
         self._layout.addWidget(self._compress_btn)
 
         self._add_progress()
         self._add_result_section()
         self._add_error_label()
-        self._layout.addStretch()
 
     def _on_file_dropped(self, paths):
         self._reset_result()
         self.input_path = paths[0]
         name = Path(self.input_path).name
         size = human_size(os.path.getsize(self.input_path))
-        self._file_info.setText(f"{name}\n{size}")
+        self._file_info.setText(f"\U0001F4C4  {name}\n     {size}")
         self._file_info.show()
+        self._drop.hide()
 
         ext = os.path.splitext(self.input_path)[1].lower()
         self._is_image = ext in IMAGE_EXTENSIONS
         self._quality_frame.setVisible(self._is_image)
-        self._compress_btn.show()
+        self._compress_btn.setEnabled(True)
 
         if not self._is_image:
             self._load_in_viewer(self.input_path)
             orig_size = os.path.getsize(self.input_path)
             if orig_size <= TARGET_SIZE_BYTES:
-                self._file_info.setText(f"{name}\n{size} (already under {TARGET_SIZE_MB} MB)")
+                self._file_info.setText(f"\U0001F4C4  {name}\n     {size} (already under {TARGET_SIZE_MB} MB)")
 
     def _start_compress(self):
         if not self.input_path:
@@ -1751,25 +1778,35 @@ class MergeToolPanel(_ToolPanelBase):
         self.gs_exe = gs_exe
         self.file_paths = []
 
-        self._add_header("Merge")
-
         self._drop = CompactDropZone(
-            "Drop PDFs here (multiple)",
+            "Drop multiple PDFs to combine",
             accept_multiple=True)
         self._drop.files_dropped.connect(self._on_files_dropped)
-        self._layout.addWidget(self._drop)
+        self._layout.addWidget(self._drop, 1)
 
         self._file_list = QListWidget()
-        self._file_list.setMaximumHeight(150)
+        self._file_list.setMaximumHeight(200)
         self._file_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self._file_list.setStyleSheet(
+            "QListWidget { background: #1e1e20; border: 1px solid #3a3a3c; border-radius: 6px; "
+            "color: #d1d1d6; font-size: 12px; padding: 4px; }"
+            "QListWidget::item { padding: 6px 8px; border-bottom: 1px solid #2c2c2e; }"
+            "QListWidget::item:selected { background: #2a2a3a; color: #f2f2f7; }")
+        self._file_list.model().rowsMoved.connect(self._on_list_reordered)
         self._file_list.hide()
         self._layout.addWidget(self._file_list)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
-        for text, handler in [("\u2191", self._move_up), ("\u2193", self._move_down), ("\u2715", self._remove_selected)]:
+        for text, tooltip, handler in [
+            ("\u2191", "Move up", self._move_up),
+            ("\u2193", "Move down", self._move_down),
+            ("\u2715", "Remove", self._remove_selected),
+            ("+", "Add more", self._add_more),
+        ]:
             b = QPushButton(text)
             b.setFixedSize(30, 26)
+            b.setToolTip(tooltip)
             b.setStyleSheet(BTN_SECONDARY)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(handler)
@@ -1781,17 +1818,22 @@ class MergeToolPanel(_ToolPanelBase):
         self._btn_row_widget.hide()
         self._layout.addWidget(self._btn_row_widget)
 
-        self._merge_btn = QPushButton("Merge PDFs")
+        self._file_count_label = QLabel("")
+        self._file_count_label.setStyleSheet("color: #636366; font-size: 11px; background: transparent;")
+        self._file_count_label.hide()
+        self._layout.addWidget(self._file_count_label)
+
+        self._merge_btn = QPushButton("\u2795  Merge PDFs")
+        self._merge_btn.setFixedHeight(40)
         self._merge_btn.setStyleSheet(BTN_PRIMARY)
         self._merge_btn.setCursor(Qt.PointingHandCursor)
         self._merge_btn.clicked.connect(self._start_merge)
-        self._merge_btn.hide()
+        self._merge_btn.setEnabled(False)
         self._layout.addWidget(self._merge_btn)
 
         self._add_progress()
         self._add_result_section()
         self._add_error_label()
-        self._layout.addStretch()
 
     def _on_files_dropped(self, paths):
         for p in paths:
@@ -1801,17 +1843,45 @@ class MergeToolPanel(_ToolPanelBase):
         if self.file_paths:
             self._load_in_viewer(self.file_paths[0])
 
+    def _add_more(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select PDF files", "", "PDF Files (*.pdf)")
+        if paths:
+            self._on_files_dropped(paths)
+
+    def _on_list_reordered(self):
+        """Sync file_paths with the visual list after drag reorder."""
+        new_paths = []
+        for i in range(self._file_list.count()):
+            text = self._file_list.item(i).text()
+            for p in self.file_paths:
+                if Path(p).name in text and p not in new_paths:
+                    new_paths.append(p)
+                    break
+        self.file_paths = new_paths
+
     def _refresh_list(self):
         self._file_list.clear()
-        for p in self.file_paths:
+        for i, p in enumerate(self.file_paths):
             name = Path(p).name
             size = human_size(os.path.getsize(p))
-            self._file_list.addItem(f"{name}  ({size})")
-        visible = len(self.file_paths) > 0
+            try:
+                reader = PdfReader(p)
+                pages = len(reader.pages)
+                self._file_list.addItem(f"{i + 1}.  {name}  \u00B7  {pages}p  \u00B7  {size}")
+            except Exception:
+                self._file_list.addItem(f"{i + 1}.  {name}  \u00B7  {size}")
+        count = len(self.file_paths)
+        visible = count > 0
         self._file_list.setVisible(visible)
         self._btn_row_widget.setVisible(visible)
-        self._merge_btn.setVisible(len(self.file_paths) >= 2)
-        self._merge_btn.setEnabled(len(self.file_paths) >= 2)
+        self._file_count_label.setVisible(visible)
+        self._file_count_label.setText(f"{count} file{'s' if count != 1 else ''} selected")
+        self._merge_btn.setEnabled(count >= 2)
+        if visible:
+            self._drop.hide()
+        else:
+            self._drop.show()
 
     def _move_up(self):
         row = self._file_list.currentRow()
@@ -2256,25 +2326,25 @@ class LandingDropZone(QFrame):
         self.setStyleSheet("background: #1c1c1e;")
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(16)
+        layout.setSpacing(20)
 
         icon = QLabel("\U0001F4C4")
         icon.setAlignment(Qt.AlignCenter)
-        icon.setStyleSheet("font-size: 48px; background: transparent;")
+        icon.setStyleSheet("font-size: 64px; background: transparent;")
         layout.addWidget(icon)
 
-        title = QLabel("Open a PDF to get started")
+        title = QLabel("Drop a PDF to get started")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #f2f2f7; font-size: 18px; font-weight: 500; background: transparent;")
+        title.setStyleSheet("color: #ffffff; font-size: 22px; font-weight: 600; background: transparent;")
         layout.addWidget(title)
 
-        sub = QLabel("Drag and drop a PDF or image file here, or click Browse")
+        sub = QLabel("Drag and drop files here, or click Browse to select")
         sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet("color: #636366; font-size: 13px; background: transparent;")
+        sub.setStyleSheet("color: #8e8e93; font-size: 14px; background: transparent;")
         layout.addWidget(sub)
 
         browse_btn = QPushButton("Browse Files")
-        browse_btn.setFixedWidth(160)
+        browse_btn.setFixedSize(180, 42)
         browse_btn.setStyleSheet(BTN_PRIMARY)
         browse_btn.setCursor(Qt.PointingHandCursor)
         browse_btn.clicked.connect(self._browse)
@@ -2304,34 +2374,45 @@ class LandingDropZone(QFrame):
 
 class FileInfoBar(QFrame):
     """Persistent bar showing current file info."""
+    close_clicked = pyqtSignal()
 
     def __init__(self):
         super().__init__()
-        self.setFixedHeight(32)
+        self.setFixedHeight(36)
         self.setStyleSheet(
             "QFrame { background: #252527; border-bottom: 1px solid #3a3a3c; }")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(16)
+        layout.setContentsMargins(14, 0, 8, 0)
+        layout.setSpacing(8)
 
         self._name_label = QLabel("")
-        self._name_label.setStyleSheet("color: #f2f2f7; font-size: 12px; font-weight: 500; background: transparent;")
+        self._name_label.setStyleSheet("color: #ffffff; font-size: 13px; font-weight: 600; background: transparent;")
         layout.addWidget(self._name_label)
 
-        self._pages_label = QLabel("")
-        self._pages_label.setStyleSheet("color: #aeaeb2; font-size: 11px; background: transparent;")
-        layout.addWidget(self._pages_label)
-
-        self._size_label = QLabel("")
-        self._size_label.setStyleSheet("color: #aeaeb2; font-size: 11px; background: transparent;")
-        layout.addWidget(self._size_label)
+        self._meta_label = QLabel("")
+        self._meta_label.setStyleSheet("color: #636366; font-size: 11px; background: transparent;")
+        layout.addWidget(self._meta_label)
 
         layout.addStretch()
 
+        self._close_btn = QPushButton("\u2715")
+        self._close_btn.setFixedSize(24, 24)
+        self._close_btn.setCursor(Qt.PointingHandCursor)
+        self._close_btn.setToolTip("Close file")
+        self._close_btn.setStyleSheet(
+            "QPushButton { background: none; border: none; color: #636366; font-size: 12px; border-radius: 12px; }"
+            "QPushButton:hover { background: #3a3a3c; color: #f2f2f7; }")
+        self._close_btn.clicked.connect(self.close_clicked.emit)
+        layout.addWidget(self._close_btn)
+
     def update_info(self, name="", pages=0, size_bytes=0):
         self._name_label.setText(name)
-        self._pages_label.setText(f"{pages} pages" if pages else "")
-        self._size_label.setText(human_size(size_bytes) if size_bytes else "")
+        parts = []
+        if pages:
+            parts.append(f"{pages} pages")
+        if size_bytes:
+            parts.append(human_size(size_bytes))
+        self._meta_label.setText("  \u00B7  ".join(parts))
 
 
 
@@ -2394,28 +2475,31 @@ class MainWindow(QMainWindow):
         self._panel_stack.setFixedWidth(236)
         self._panel_stack.setStyleSheet("background: #252527;")
 
+        # Tab definitions: (label, icon, tooltip, panel)
         all_ops = [
-            ("Compress", "\u2B07", CompressToolPanel(self.gs_exe, self)),
-            ("Merge", "\u2795", MergeToolPanel(self.gs_exe, self)),
-            ("Split", "\u2702", SplitToolPanel(self)),
-            ("Flatten", "\u25A3", FlattenToolPanel(self)),
-            ("OCR", "\U0001F50D", OCRToolPanel(self)),
-            ("Redact", "\u2588", RedactToolPanel(self)),
+            ("Compress", "\U0001F5DC", "Reduce file size", CompressToolPanel(self.gs_exe, self)),
+            ("Merge", "\U0001F4DA", "Combine multiple PDFs", MergeToolPanel(self.gs_exe, self)),
+            ("Split", "\u2702", "Split into parts", SplitToolPanel(self)),
+            ("Flatten", "\u25A3", "Flatten forms", FlattenToolPanel(self)),
+            ("OCR", "\U0001F50D", "Extract text", OCRToolPanel(self)),
+            ("Redact", "\u2588", "Black out text", RedactToolPanel(self)),
         ]
 
         op_idx = 0
-        for label, icon, panel in all_ops:
+        for label, icon, tooltip, panel in all_ops:
             if ENABLED_TABS is not None and label not in ENABLED_TABS:
                 continue
 
             btn = QPushButton(f" {icon}  {label}")
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(tooltip)
             btn.setStyleSheet(
-                "QPushButton { background: none; border: none; border-bottom: 2px solid transparent; "
-                "color: #636366; font-size: 13px; padding: 0 16px; min-height: 46px; }"
-                "QPushButton:hover { color: #aeaeb2; }"
-                "QPushButton:checked { color: #f2f2f7; border-bottom-color: #3b82f6; font-weight: 500; }")
+                "QPushButton { background: none; border: none; border-bottom: 3px solid transparent; "
+                "color: #48484a; font-size: 13px; padding: 0 18px; min-height: 46px; }"
+                "QPushButton:hover { color: #d1d1d6; background: rgba(255,255,255,0.03); }"
+                "QPushButton:checked { color: #ffffff; border-bottom-color: #3b82f6; "
+                "font-weight: 600; background: rgba(59,130,246,0.08); }")
             idx = op_idx
             btn.clicked.connect(lambda checked, i=idx: self._switch_op(i))
             tb_layout.addWidget(btn)
@@ -2435,6 +2519,7 @@ class MainWindow(QMainWindow):
 
         # File info bar (hidden until file loaded)
         self._file_info_bar = FileInfoBar()
+        self._file_info_bar.close_clicked.connect(self._unload_file)
         self._file_info_bar.hide()
         main_layout.addWidget(self._file_info_bar)
 
@@ -2554,6 +2639,17 @@ class MainWindow(QMainWindow):
             pages = self._viewer.get_total_pages()
         size = os.path.getsize(path)
         self._file_info_bar.update_info(Path(path).name, pages, size)
+
+    def _unload_file(self):
+        """Return to landing screen."""
+        self._current_pdf = ""
+        self._file_loaded = False
+        self._viewer._clear()
+        self._thumb_panel.clear()
+        self._toolbar.hide()
+        self._file_info_bar.hide()
+        self._body_widget.hide()
+        self._landing.show()
 
     def _on_page_changed(self, current, total):
         self._thumb_panel.set_current_page(current)
