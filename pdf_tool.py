@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.2.2"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -691,13 +691,23 @@ class UpdateBanner(QFrame):
         self.restart_btn.setEnabled(False)
         self.status_label.setText("Closing and installing update...")
 
-        app_exe = sys.executable
+        # Find the real installed exe path (not the _MEI temp extraction)
+        if getattr(sys, 'frozen', False):
+            # In frozen mode, look for the exe in known install locations
+            possible = [
+                os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "PDF Tool", "PDF Tool.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES", ""), "PDF Tool", "PDF Tool.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "PDF Tool", "PDF Tool.exe"),
+            ]
+            app_exe = next((p for p in possible if os.path.isfile(p)), sys.executable)
+        else:
+            app_exe = sys.executable
         # Write a temp batch script to run installer then relaunch — avoids shell=True
         bat_path = os.path.join(tempfile.gettempdir(), "_pdf_tool_update.bat")
         with open(bat_path, "w") as bat:
             bat.write("@echo off\r\n")
             bat.write(f'"{self.installer_path}" /SILENT /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\r\n')
-            bat.write("timeout /t 2 /nobreak >nul\r\n")  # wait for old process to release _MEI folder
+            bat.write("timeout /t 3 /nobreak >nul\r\n")  # wait for installer + old process cleanup
             bat.write(f'start "" "{app_exe}"\r\n')
             bat.write('del "%~f0"\r\n')  # self-delete
         subprocess.Popen(
