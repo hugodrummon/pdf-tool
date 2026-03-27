@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.2.6"
+APP_VERSION = "2.2.7"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -2585,21 +2585,39 @@ class MainWindow(QMainWindow):
             self._on_landing_drop(paths)
 
     def _on_landing_drop(self, paths):
-        """Handle file drop on landing screen — load first file and show workspace."""
+        """Handle file drop — auto-feed file to Compress and Merge panels."""
         if not paths:
             return
+        # Limit to 5 files for merge
+        paths = paths[:5]
         self._show_workspace()
         path = paths[0]
         if path.lower().endswith(".pdf"):
             self.load_pdf(path)
-        # If multiple PDFs dropped, auto-select Merge and populate
-        if len(paths) > 1 and all(p.lower().endswith(".pdf") for p in paths):
+
+        # Auto-feed first file to Compress panel
+        for i, lbl in enumerate(self._op_labels):
+            if lbl == "Compress":
+                panel = self._panel_stack.widget(i).widget()
+                if hasattr(panel, '_on_file_dropped'):
+                    panel._on_file_dropped([path])
+                break
+
+        # Auto-feed all files to Merge panel
+        pdf_paths = [p for p in paths if p.lower().endswith(".pdf")]
+        if pdf_paths:
+            for i, lbl in enumerate(self._op_labels):
+                if lbl == "Merge":
+                    panel = self._panel_stack.widget(i).widget()
+                    if hasattr(panel, '_on_files_dropped'):
+                        panel._on_files_dropped(pdf_paths)
+                    break
+
+        # If multiple files, show Merge tab; otherwise show Compress
+        if len(pdf_paths) > 1:
             for i, lbl in enumerate(self._op_labels):
                 if lbl == "Merge":
                     self._switch_op(i)
-                    panel = self._panel_stack.widget(i).widget()
-                    if hasattr(panel, '_on_files_dropped'):
-                        panel._on_files_dropped(paths)
                     break
         elif self._op_buttons:
             self._switch_op(0)
