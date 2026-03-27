@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -1420,10 +1420,12 @@ class PdfViewer(QWidget):
             page_width_pts = page.rect.height
         else:
             page_width_pts = page.rect.width
-        # Available width = scroll area width minus padding (24 each side) minus scrollbar
+        # Available width = scroll area viewport minus padding and scrollbar
         available = self._scroll.viewport().width() - 48 - 20
-        if available < 100:
-            available = 400
+        if available < 200:
+            # Widget not laid out yet — retry after layout settles
+            QTimer.singleShot(100, self._fit_page)
+            return
         # page_width at zoom=1.0 is page_width_pts * dpi / 72
         base_pixel_width = page_width_pts * self._dpi / 72.0
         if base_pixel_width > 0:
@@ -2375,10 +2377,11 @@ class LandingDropZone(QFrame):
 class FileInfoBar(QFrame):
     """Persistent bar showing current file info."""
     close_clicked = pyqtSignal()
+    compress_clicked = pyqtSignal()
 
     def __init__(self):
         super().__init__()
-        self.setFixedHeight(36)
+        self.setFixedHeight(40)
         self.setStyleSheet(
             "QFrame { background: #252527; border-bottom: 1px solid #3a3a3c; }")
         layout = QHBoxLayout(self)
@@ -2394,6 +2397,18 @@ class FileInfoBar(QFrame):
         layout.addWidget(self._meta_label)
 
         layout.addStretch()
+
+        self._compress_btn = QPushButton("\U0001F5DC  Compress")
+        self._compress_btn.setFixedHeight(28)
+        self._compress_btn.setCursor(Qt.PointingHandCursor)
+        self._compress_btn.setToolTip("Compress this file")
+        self._compress_btn.setStyleSheet(
+            "QPushButton { background: #3b82f6; color: #ffffff; border: none; "
+            "padding: 0 14px; border-radius: 6px; font-size: 12px; font-weight: 500; }"
+            "QPushButton:hover { background: #2563eb; }"
+            "QPushButton:pressed { background: #1d4ed8; }")
+        self._compress_btn.clicked.connect(self.compress_clicked.emit)
+        layout.addWidget(self._compress_btn)
 
         self._close_btn = QPushButton("\u2715")
         self._close_btn.setFixedSize(24, 24)
@@ -2520,6 +2535,7 @@ class MainWindow(QMainWindow):
         # File info bar (hidden until file loaded)
         self._file_info_bar = FileInfoBar()
         self._file_info_bar.close_clicked.connect(self._unload_file)
+        self._file_info_bar.compress_clicked.connect(self._quick_compress)
         self._file_info_bar.hide()
         main_layout.addWidget(self._file_info_bar)
 
@@ -2639,6 +2655,17 @@ class MainWindow(QMainWindow):
             pages = self._viewer.get_total_pages()
         size = os.path.getsize(path)
         self._file_info_bar.update_info(Path(path).name, pages, size)
+
+    def _quick_compress(self):
+        """Quick compress from the file info bar — switches to Compress tab and auto-loads the file."""
+        if not self._current_pdf:
+            return
+        # Switch to Compress tab (index 0)
+        self._switch_op(0)
+        # Feed the current file to the compress panel
+        panel = self._panel_stack.widget(0).widget()
+        if hasattr(panel, '_on_file_dropped'):
+            panel._on_file_dropped([self._current_pdf])
 
     def _unload_file(self):
         """Return to landing screen."""
