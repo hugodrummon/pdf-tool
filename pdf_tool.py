@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.1.3"
+APP_VERSION = "2.1.4"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -2290,6 +2290,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PDF Combiner")
+        self.setAcceptDrops(True)
         self.resize(1200, 800)
         self.setMinimumSize(1000, 700)
 
@@ -2430,6 +2431,20 @@ class MainWindow(QMainWindow):
         self._update_checker = UpdateChecker()
         self._update_checker.update_available.connect(self._on_update_available)
         self._update_checker.start()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        valid_exts = [".pdf"] + IMAGE_EXTENSIONS
+        paths = []
+        for url in event.mimeData().urls():
+            p = url.toLocalFile()
+            if os.path.isfile(p) and os.path.splitext(p)[1].lower() in valid_exts:
+                paths.append(p)
+        if paths:
+            self._on_landing_drop(paths)
 
     def _on_landing_drop(self, paths):
         """Handle file drop on landing screen — load first file and show workspace."""
