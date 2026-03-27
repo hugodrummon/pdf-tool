@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.2"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -692,10 +692,16 @@ class UpdateBanner(QFrame):
         self.status_label.setText("Closing and installing update...")
 
         app_exe = sys.executable
+        # Write a temp batch script to run installer then relaunch — avoids shell=True
+        bat_path = os.path.join(tempfile.gettempdir(), "_pdf_tool_update.bat")
+        with open(bat_path, "w") as bat:
+            bat.write("@echo off\r\n")
+            bat.write(f'"{self.installer_path}" /SILENT /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS\r\n')
+            bat.write(f'start "" "{app_exe}"\r\n')
+            bat.write('del "%~f0"\r\n')  # self-delete
         subprocess.Popen(
-            f'cmd /c ""{self.installer_path}" /SILENT /CLOSEAPPLICATIONS'
-            f' /FORCECLOSEAPPLICATIONS && start "" "{app_exe}""',
-            shell=True,
+            ["cmd", "/c", bat_path],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
         )
 
         QApplication.instance().quit()
