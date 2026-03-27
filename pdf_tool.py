@@ -4,7 +4,7 @@ Built for non-technical users in legal/admin environments.
 No internet, no cloud, no third-party services. Everything stays on this machine.
 """
 
-APP_VERSION = "2.2.3"
+APP_VERSION = "2.2.4"
 GITHUB_REPO = "hugodrummon/pdf-tool"
 UPDATE_PUBLIC_KEY = "sw613yM42XKzroyOPRE19tMKJEqHQf2Ycne7S1rOMpU="
 import sys
@@ -1179,16 +1179,10 @@ class PdfViewer(QWidget):
         super().__init__()
         self._dpi = dpi
         self._doc = None
-        self._page_widgets = []       # QFrame per page
-        self._page_labels = []        # QLabel inside each frame (holds pixmap)
-        self._rendered_pages = set()   # which pages have been rendered
+        self._page_widgets = []
         self._total_pages = 0
         self._zoom = 1.0
         self._rotation = 0
-        self._resize_timer = QTimer()
-        self._resize_timer.setSingleShot(True)
-        self._resize_timer.setInterval(150)
-        self._resize_timer.timeout.connect(self._on_resize_done)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1312,35 +1306,51 @@ class PdfViewer(QWidget):
             self._doc = fitz.open(pdf_path)
             self._total_pages = len(self._doc)
             self._drop_zone_label.hide()
-            self._create_placeholders()
-            # Delay fit until layout has settled and viewport has its real size
-            QTimer.singleShot(50, self._fit_page)
+            # Delay render so viewport has its real size
+            QTimer.singleShot(50, self._initial_render)
             self._page_label.setText(f"Page 1 of {self._total_pages}")
             self.page_changed.emit(1, self._total_pages)
         except Exception:
             self._page_label.setText("Failed to load PDF")
 
-    def _create_placeholders(self):
-        """Create empty frames for all pages with estimated sizes — no rendering yet."""
+    def _initial_render(self):
+        """Calculate fit-to-width zoom then render all pages once."""
+        if not self._doc or self._total_pages == 0:
+            return
+        page = self._doc[0]
+        if self._rotation in (90, 270):
+            page_width_pts = page.rect.height
+        else:
+            page_width_pts = page.rect.width
+        available = self._scroll.viewport().width() - 48 - 20
+        if available < 200:
+            QTimer.singleShot(100, self._initial_render)
+            return
+        base_pixel_width = page_width_pts * self._dpi / 72.0
+        if base_pixel_width > 0:
+            self._zoom = max(0.25, min(available / base_pixel_width, 3.0))
+        self._zoom_label.setText(f"{int(self._zoom * 100)}%")
+        self._render_all()
+
+    def _render_all(self):
+        """Render all pages at current zoom — simple and fast."""
         for w in self._page_widgets:
             w.deleteLater()
         self._page_widgets = []
-        self._page_labels = []
-        self._rendered_pages = set()
         if not self._doc:
             return
 
+        mat = fitz.Matrix(self._dpi * self._zoom / 72.0, self._dpi * self._zoom / 72.0)
+        mat = mat.prerotate(self._rotation)
+
         for i in range(self._total_pages):
             page = self._doc[i]
-            if self._rotation in (90, 270):
-                pw, ph = page.rect.height, page.rect.width
-            else:
-                pw, ph = page.rect.width, page.rect.height
-            pixel_w = int(pw * self._dpi * self._zoom / 72.0)
-            pixel_h = int(ph * self._dpi * self._zoom / 72.0)
+            pix = page.get_pixmap(matrix=mat)
+            img = QImage(pix.samples, pix.width, pix.height, pix.stride,
+                         QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(img)
 
             frame = QFrame()
-            frame.setFixedSize(pixel_w, pixel_h)
             frame.setStyleSheet("QFrame { background: white; border-radius: 2px; }")
             shadow = QGraphicsDropShadowEffect()
             shadow.setBlurRadius(20)
@@ -1351,50 +1361,18 @@ class PdfViewer(QWidget):
             fl = QVBoxLayout(frame)
             fl.setContentsMargins(0, 0, 0, 0)
             label = QLabel()
+            label.setPixmap(pixmap)
             label.setAlignment(Qt.AlignCenter)
             label.setStyleSheet("background: white;")
             fl.addWidget(label)
 
             self._pages_layout.addWidget(frame)
             self._page_widgets.append(frame)
-            self._page_labels.append(label)
-
-        # Render visible pages
-        QTimer.singleShot(10, self._render_visible)
-
-    def _render_visible(self):
-        """Only render pages currently visible in the scroll viewport."""
-        if not self._doc or not self._page_widgets:
-            return
-        viewport = self._scroll.viewport().rect()
-        scroll_y = self._scroll.verticalScrollBar().value()
-        view_top = scroll_y - 200  # small buffer above
-        view_bottom = scroll_y + viewport.height() + 200  # small buffer below
-
-        mat = fitz.Matrix(self._dpi * self._zoom / 72.0, self._dpi * self._zoom / 72.0)
-        mat = mat.prerotate(self._rotation)
-
-        for i, frame in enumerate(self._page_widgets):
-            if i in self._rendered_pages:
-                continue
-            frame_top = frame.geometry().top()
-            frame_bottom = frame.geometry().bottom()
-            if frame_bottom >= view_top and frame_top <= view_bottom:
-                page = self._doc[i]
-                pix = page.get_pixmap(matrix=mat)
-                img = QImage(pix.samples, pix.width, pix.height, pix.stride,
-                             QImage.Format_RGB888)
-                pixmap = QPixmap.fromImage(img)
-                self._page_labels[i].setPixmap(pixmap)
-                frame.setFixedSize(pix.width, pix.height)
-                self._rendered_pages.add(i)
 
     def _clear(self):
         for w in self._page_widgets:
             w.deleteLater()
         self._page_widgets = []
-        self._page_labels = []
-        self._rendered_pages = set()
         self._total_pages = 0
         self._rotation = 0
         self._zoom = 1.0
@@ -1409,42 +1387,23 @@ class PdfViewer(QWidget):
         if self._zoom < 3.0:
             self._zoom = min(self._zoom + 0.25, 3.0)
             self._zoom_label.setText(f"{int(self._zoom * 100)}%")
-            self._create_placeholders()
+            self._render_all()
 
     def _zoom_out(self):
         if self._zoom > 0.25:
             self._zoom = max(self._zoom - 0.25, 0.25)
             self._zoom_label.setText(f"{int(self._zoom * 100)}%")
-            self._create_placeholders()
+            self._render_all()
 
     def _rotate(self):
         self._rotation = (self._rotation + 90) % 360
-        self._create_placeholders()
+        self._render_all()
 
     def _fit_page(self):
         """Fit page width to available viewport width."""
         if not self._doc or self._total_pages == 0:
             return
-        page = self._doc[0]
-        if self._rotation in (90, 270):
-            page_width_pts = page.rect.height
-        else:
-            page_width_pts = page.rect.width
-        # Available width = scroll area viewport minus padding and scrollbar
-        available = self._scroll.viewport().width() - 48 - 20
-        if available < 200:
-            # Widget not laid out yet — retry after layout settles
-            QTimer.singleShot(100, self._fit_page)
-            return
-        # page_width at zoom=1.0 is page_width_pts * dpi / 72
-        base_pixel_width = page_width_pts * self._dpi / 72.0
-        if base_pixel_width > 0:
-            self._zoom = available / base_pixel_width
-            self._zoom = max(0.25, min(self._zoom, 3.0))
-        else:
-            self._zoom = 1.0
-        self._zoom_label.setText(f"{int(self._zoom * 100)}%")
-        self._create_placeholders()
+        self._initial_render()
 
     def _prev_page(self):
         current = self._get_current_page()
@@ -1471,23 +1430,11 @@ class PdfViewer(QWidget):
         current = self._get_current_page()
         self._page_label.setText(f"Page {current} of {self._total_pages}")
         self.page_changed.emit(current, self._total_pages)
-        self._render_visible()
 
     def scroll_to_page(self, page_num):
         idx = page_num - 1
         if 0 <= idx < len(self._page_widgets):
             self._scroll.ensureWidgetVisible(self._page_widgets[idx])
-
-    def resizeEvent(self, event):
-        """Re-fit pages when viewer is resized (debounced)."""
-        super().resizeEvent(event)
-        if self._doc and self._total_pages > 0:
-            self._resize_timer.start()
-
-    def _on_resize_done(self):
-        """Debounced resize handler — only re-renders after user stops resizing."""
-        if self._doc and self._total_pages > 0:
-            self._fit_page()
 
     def get_total_pages(self):
         return self._total_pages
